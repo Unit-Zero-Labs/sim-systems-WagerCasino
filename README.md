@@ -1,5 +1,6 @@
-![uzlabs copy](https://github.com/user-attachments/assets/3c7d11d9-e417-41e5-825f-19355d36dfcc)
-Unit Zero Labs Tokenomics Engine
+![uzlabs copy](https://github.com/user-attachments/assets/447ee285-418a-42ac-86d2-b871bd97ca7f)
+
+## UZL Tokenomics Engine
 
 An interactive dashboard for visualizing and simulating tokenomics data by Unit Zero Labs.
 
