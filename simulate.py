@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import random
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Union
 
 # Import radCAD instead of cadCAD
 from radcad import Model, Simulation, Experiment
@@ -250,15 +250,17 @@ class TokenomicsSimulation:
         """
         return ("time_step", prev_state["time_step"] + 1)
     
-    def run_simulation(self, params: Dict[str, Any]) -> pd.DataFrame:
+    def run_simulation(self, params: Dict[str, Any], num_runs: int = 1) -> Union[pd.DataFrame, Dict[str, Any]]:
         """
         Run a radCAD simulation with the given parameters.
         
         Args:
             params: Dictionary of simulation parameters
+            num_runs: Number of Monte Carlo runs (default: 1)
             
         Returns:
-            DataFrame with simulation results
+            If num_runs=1: DataFrame with simulation results
+            If num_runs>1: Dictionary with raw data and statistical measures (mean, std_dev, conf_intervals, percentiles)
         """
         # Set up initial state
         initial_state = self.setup_initial_state(params)
@@ -292,7 +294,7 @@ class TokenomicsSimulation:
         simulation = Simulation(
             model=model,
             timesteps=self.timesteps,
-            runs=1  # Number of monte carlo runs
+            runs=num_runs  # Use the num_runs parameter for Monte Carlo simulation
         )
         
         # Create experiment
@@ -301,20 +303,84 @@ class TokenomicsSimulation:
         # Run experiment
         result = experiment.run()
         
-        # Convert to DataFrame
-        result_df = pd.DataFrame(result)
-        
-        # Add dates
-        result_df['date'] = [self.data.dates[i] if i < len(self.data.dates) else None for i in result_df['time_step']]
-        
-        return result_df
+        # Process results based on number of runs
+        if num_runs > 1:
+            # Convert to DataFrame
+            result_df = pd.DataFrame(result)
+            
+            # Add dates
+            result_df['date'] = [self.data.dates[i] if i < len(self.data.dates) else None for i in result_df['timestep']]
+            
+            # Create a dictionary to store the processed results
+            processed_results = {
+                'raw_data': result_df,
+                'mean': {},
+                'std_dev': {},
+                'conf_intervals': {},
+                'percentiles': {}
+            }
+            
+            # Get unique timesteps
+            timesteps = sorted(result_df['timestep'].unique())
+            
+            # State variables to analyze
+            state_vars = ['token_supply', 'circulating_supply', 'staked_tokens', 
+                          'token_price', 'market_cap', 'staking_apr']
+            
+            # For each state variable
+            for var in state_vars:
+                # Initialize DataFrames for statistics
+                processed_results['mean'][var] = pd.DataFrame(index=timesteps)
+                processed_results['std_dev'][var] = pd.DataFrame(index=timesteps)
+                processed_results['conf_intervals'][var] = pd.DataFrame(index=timesteps, columns=['lower', 'upper'])
+                processed_results['percentiles'][var] = pd.DataFrame(index=timesteps, columns=[5, 25, 50, 75, 95])
+                
+                # Calculate statistics for each timestep
+                for t in timesteps:
+                    # Get data for this timestep across all runs
+                    timestep_data = result_df[(result_df['timestep'] == t)][var]
+                    
+                    # Calculate mean and standard deviation
+                    mean_val = timestep_data.mean()
+                    std_val = timestep_data.std()
+                    
+                    # Calculate 95% confidence interval
+                    conf_interval = 1.96 * std_val / np.sqrt(num_runs)  # 95% CI
+                    
+                    # Calculate percentiles
+                    percentiles = timestep_data.quantile([0.05, 0.25, 0.5, 0.75, 0.95]).values
+                    
+                    # Store results
+                    processed_results['mean'][var].loc[t] = mean_val
+                    processed_results['std_dev'][var].loc[t] = std_val
+                    processed_results['conf_intervals'][var].loc[t] = [mean_val - conf_interval, mean_val + conf_interval]
+                    processed_results['percentiles'][var].loc[t] = percentiles
+            
+            # Add dates to the statistical results
+            for var in state_vars:
+                date_index = [self.data.dates[i] if i < len(self.data.dates) else None for i in timesteps]
+                processed_results['mean'][var].index = date_index
+                processed_results['std_dev'][var].index = date_index
+                processed_results['conf_intervals'][var].index = date_index
+                processed_results['percentiles'][var].index = date_index
+            
+            return processed_results
+        else:
+            # Original single-run processing
+            result_df = pd.DataFrame(result)
+            
+            # Add dates
+            result_df['date'] = [self.data.dates[i] if i < len(self.data.dates) else None for i in result_df['timestep']]
+            
+            return result_df
     
-    def run_scenario_comparison(self, scenarios: List[Dict[str, Any]]) -> Dict[str, pd.DataFrame]:
+    def run_scenario_comparison(self, scenarios: List[Dict[str, Any]], num_runs: int = 1) -> Dict[str, Any]:
         """
         Run multiple simulations for scenario comparison.
         
         Args:
             scenarios: List of dictionaries, each containing a scenario name and parameters
+            num_runs: Number of Monte Carlo runs for each scenario (default: 1)
             
         Returns:
             Dictionary mapping scenario names to simulation results
@@ -325,10 +391,92 @@ class TokenomicsSimulation:
             name = scenario.get("name", f"Scenario {len(results) + 1}")
             params = scenario.get("params", {})
             
-            # Run simulation for this scenario
-            result = self.run_simulation(params)
+            # Run simulation for this scenario with specified number of runs
+            result = self.run_simulation(params, num_runs=num_runs)
             
             # Store results
             results[name] = result
         
-        return results 
+        return results
+    
+    def create_monte_carlo_visualization(self, mc_results: Dict[str, Any], variable: str, title: str = None) -> Dict[str, Any]:
+        """
+        Create visualization data for Monte Carlo simulation results.
+        
+        Args:
+            mc_results: Results from a Monte Carlo simulation run
+            variable: The state variable to visualize (e.g., 'token_price', 'market_cap')
+            title: Optional title for the visualization
+            
+        Returns:
+            Dictionary with data for visualization:
+                - x_values: Dates or timesteps
+                - mean: Mean values
+                - lower_ci: Lower confidence interval
+                - upper_ci: Upper confidence interval
+                - percentiles: Percentile values (5th, 25th, 50th, 75th, 95th)
+        """
+        if not title:
+            title = f"{variable.replace('_', ' ').title()} Monte Carlo Simulation"
+            
+        # Get the data
+        mean_values = mc_results['mean'][variable].iloc[:, 0].values
+        conf_intervals = mc_results['conf_intervals'][variable].values
+        lower_ci = [ci[0] for ci in conf_intervals]
+        upper_ci = [ci[1] for ci in conf_intervals]
+        
+        # Get percentiles
+        percentiles = mc_results['percentiles'][variable].values
+        
+        # Get x values (dates or timesteps)
+        x_values = mc_results['mean'][variable].index
+        
+        # Create visualization data
+        viz_data = {
+            'title': title,
+            'x_values': x_values,
+            'mean': mean_values,
+            'lower_ci': lower_ci,
+            'upper_ci': upper_ci,
+            'percentiles': percentiles
+        }
+        
+        return viz_data
+    
+    def get_distribution_at_timestep(self, mc_results: Dict[str, Any], variable: str, timestep: int) -> Dict[str, Any]:
+        """
+        Get probability distribution data for a specific variable at a specific timestep.
+        
+        Args:
+            mc_results: Results from a Monte Carlo simulation run
+            variable: The state variable to analyze (e.g., 'token_price', 'market_cap')
+            timestep: The timestep to analyze
+            
+        Returns:
+            Dictionary with distribution data:
+                - values: All values from different runs
+                - mean: Mean value
+                - median: Median value
+                - std_dev: Standard deviation
+                - percentiles: Key percentiles (5th, 25th, 50th, 75th, 95th)
+        """
+        # Get all values for this variable at this timestep across all runs
+        raw_data = mc_results['raw_data']
+        values = raw_data[(raw_data['timestep'] == timestep)][variable].values
+        
+        # Calculate statistics
+        mean = np.mean(values)
+        median = np.median(values)
+        std_dev = np.std(values)
+        percentiles = np.percentile(values, [5, 25, 50, 75, 95])
+        
+        # Create distribution data
+        dist_data = {
+            'values': values,
+            'mean': mean,
+            'median': median,
+            'std_dev': std_dev,
+            'percentiles': percentiles
+        }
+        
+        return dist_data 

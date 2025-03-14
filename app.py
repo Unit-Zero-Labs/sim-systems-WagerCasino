@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import plotly.figure_factory as ff
 from tokenomics_data import TokenomicsData, parse_csv
 from simulate import TokenomicsSimulation
 
@@ -316,6 +317,539 @@ def plot_staking_apr(data):
     
     return fig
 
+def plot_monte_carlo_results(mc_results, variable, show_confidence_intervals=True, show_percentiles=True):
+    """
+    Create a plot for Monte Carlo simulation results with confidence intervals and percentile bands.
+    
+    Args:
+        mc_results: Results from a Monte Carlo simulation
+        variable: The state variable to visualize (e.g., 'token_price', 'market_cap')
+        show_confidence_intervals: Whether to show 95% confidence intervals
+        show_percentiles: Whether to show percentile bands (5th, 25th, 75th, 95th)
+        
+    Returns:
+        Plotly figure object
+    """
+    # Get visualization data
+    x_values = mc_results['mean'][variable].index
+    mean_values = mc_results['mean'][variable].iloc[:, 0].values
+    
+    # Create the plot
+    fig = go.Figure()
+    
+    # Add mean line
+    fig.add_trace(go.Scatter(
+        x=x_values,
+        y=mean_values,
+        mode='lines',
+        name='Mean',
+        line=dict(color='blue', width=2)
+    ))
+    
+    # Add confidence intervals
+    if show_confidence_intervals:
+        conf_intervals = mc_results['conf_intervals'][variable].values
+        lower_ci = [ci[0] for ci in conf_intervals]
+        upper_ci = [ci[1] for ci in conf_intervals]
+        
+        fig.add_trace(go.Scatter(
+            x=x_values,
+            y=upper_ci,
+            mode='lines',
+            name='95% CI Upper',
+            line=dict(width=0),
+            showlegend=False
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=x_values,
+            y=lower_ci,
+            mode='lines',
+            name='95% CI Lower',
+            line=dict(width=0),
+            fill='tonexty',
+            fillcolor='rgba(0, 0, 255, 0.2)',
+            showlegend=False
+        ))
+    
+    # Add percentile bands
+    if show_percentiles:
+        percentiles = mc_results['percentiles'][variable].values
+        
+        # 5th and 95th percentiles
+        fig.add_trace(go.Scatter(
+            x=x_values,
+            y=[p[4] for p in percentiles],  # 95th percentile
+            mode='lines',
+            name='95th Percentile',
+            line=dict(color='rgba(255, 0, 0, 0.5)', width=1, dash='dot')
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=x_values,
+            y=[p[0] for p in percentiles],  # 5th percentile
+            mode='lines',
+            name='5th Percentile',
+            line=dict(color='rgba(255, 0, 0, 0.5)', width=1, dash='dot')
+        ))
+        
+        # 25th and 75th percentiles
+        fig.add_trace(go.Scatter(
+            x=x_values,
+            y=[p[3] for p in percentiles],  # 75th percentile
+            mode='lines',
+            name='75th Percentile',
+            line=dict(color='rgba(0, 255, 0, 0.5)', width=1, dash='dot')
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=x_values,
+            y=[p[1] for p in percentiles],  # 25th percentile
+            mode='lines',
+            name='25th Percentile',
+            line=dict(color='rgba(0, 255, 0, 0.5)', width=1, dash='dot')
+        ))
+    
+    # Update layout
+    fig.update_layout(
+        title=f"Monte Carlo Simulation: {variable.replace('_', ' ').title()}",
+        xaxis_title="Date",
+        yaxis_title=variable.replace('_', ' ').title(),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="white")
+    )
+    
+    # Update axes
+    fig.update_xaxes(
+        showgrid=True, 
+        gridwidth=1, 
+        gridcolor="rgba(255,255,255,0.1)",
+        showline=True,
+        linewidth=1,
+        linecolor="rgba(255,255,255,0.5)"
+    )
+    fig.update_yaxes(
+        showgrid=True, 
+        gridwidth=1, 
+        gridcolor="rgba(255,255,255,0.1)",
+        showline=True,
+        linewidth=1,
+        linecolor="rgba(255,255,255,0.5)"
+    )
+    
+    return fig
+
+def plot_distribution_at_timestep(mc_results, variable, timestep):
+    """
+    Create a probability distribution plot for a specific variable at a specific timestep.
+    
+    Args:
+        mc_results: Results from a Monte Carlo simulation
+        variable: The state variable to analyze (e.g., 'token_price', 'market_cap')
+        timestep: The timestep to analyze
+        
+    Returns:
+        Plotly figure object and statistics dictionary
+    """
+    # Get distribution data
+    raw_data = mc_results['raw_data']
+    values = raw_data[(raw_data['timestep'] == timestep)][variable].values
+    
+    # Calculate statistics
+    mean = np.mean(values)
+    median = np.median(values)
+    std_dev = np.std(values)
+    percentiles = np.percentile(values, [5, 25, 50, 75, 95])
+    
+    # Create histogram with density curve
+    hist_fig = ff.create_distplot(
+        [values], 
+        [variable.replace('_', ' ').title()],
+        bin_size=(max(values) - min(values)) / 20,
+        show_rug=False,
+        colors=['rgba(0, 0, 255, 0.6)']
+    )
+    
+    # Add vertical lines for statistics
+    hist_fig.add_vline(x=mean, line_dash="solid", line_color="blue", annotation_text="Mean")
+    hist_fig.add_vline(x=median, line_dash="dash", line_color="green", annotation_text="Median")
+    hist_fig.add_vline(x=percentiles[0], line_dash="dot", line_color="red", annotation_text="5th")
+    hist_fig.add_vline(x=percentiles[4], line_dash="dot", line_color="red", annotation_text="95th")
+    
+    # Update layout
+    hist_fig.update_layout(
+        title=f"Probability Distribution at Timestep {timestep}",
+        xaxis_title=variable.replace('_', ' ').title(),
+        yaxis_title="Probability Density",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="white")
+    )
+    
+    # Update axes
+    hist_fig.update_xaxes(
+        showgrid=True, 
+        gridwidth=1, 
+        gridcolor="rgba(255,255,255,0.1)",
+        showline=True,
+        linewidth=1,
+        linecolor="rgba(255,255,255,0.5)"
+    )
+    hist_fig.update_yaxes(
+        showgrid=True, 
+        gridwidth=1, 
+        gridcolor="rgba(255,255,255,0.1)",
+        showline=True,
+        linewidth=1,
+        linecolor="rgba(255,255,255,0.5)"
+    )
+    
+    # Create statistics dictionary
+    stats = {
+        'mean': mean,
+        'median': median,
+        'std_dev': std_dev,
+        'percentiles': percentiles,
+        'cv': std_dev / mean if mean != 0 else float('inf')  # Coefficient of variation
+    }
+    
+    return hist_fig, stats
+
+def display_single_run_results(sim_result):
+    """
+    Display the results of a single simulation run.
+    
+    Args:
+        sim_result: DataFrame with simulation results
+    """
+    # Create tabs for different metrics
+    metric_tabs = st.tabs(["Token Supply", "Token Price", "Market Cap", "Staking"])
+    
+    with metric_tabs[0]:
+        # Plot the token supply results
+        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=sim_result['date'], 
+            y=sim_result['circulating_supply'], 
+            mode='lines', 
+            name='Circulating Supply'
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=sim_result['date'], 
+            y=sim_result['token_supply'], 
+            mode='lines', 
+            name='Total Supply',
+            line=dict(dash='dash')
+        ))
+        
+        fig.update_layout(
+            title="Simulated Token Supply",
+            xaxis_title="Date",
+            yaxis_title="Tokens",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white")
+        )
+        
+        # Update axes
+        fig.update_xaxes(
+            showgrid=True, 
+            gridwidth=1, 
+            gridcolor="rgba(255,255,255,0.1)",
+            showline=True,
+            linewidth=1,
+            linecolor="rgba(255,255,255,0.5)"
+        )
+        fig.update_yaxes(
+            showgrid=True, 
+            gridwidth=1, 
+            gridcolor="rgba(255,255,255,0.1)",
+            showline=True,
+            linewidth=1,
+            linecolor="rgba(255,255,255,0.5)"
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Display the simulation results
+        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+        st.subheader("Supply Results")
+        st.write(f"Initial Supply: {sim_result['circulating_supply'].iloc[0]:,.0f} tokens")
+        st.write(f"Final Supply: {sim_result['circulating_supply'].iloc[-1]:,.0f} tokens")
+        st.write(f"Change: {(sim_result['circulating_supply'].iloc[-1] - sim_result['circulating_supply'].iloc[0]):,.0f} tokens ({(sim_result['circulating_supply'].iloc[-1] / sim_result['circulating_supply'].iloc[0] - 1) * 100:.2f}%)")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with metric_tabs[1]:
+        # Plot the token price results
+        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=sim_result['date'], 
+            y=sim_result['token_price'], 
+            mode='lines', 
+            name='Token Price'
+        ))
+        
+        fig.update_layout(
+            title="Simulated Token Price",
+            xaxis_title="Date",
+            yaxis_title="USD",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white")
+        )
+        
+        # Update axes
+        fig.update_xaxes(
+            showgrid=True, 
+            gridwidth=1, 
+            gridcolor="rgba(255,255,255,0.1)",
+            showline=True,
+            linewidth=1,
+            linecolor="rgba(255,255,255,0.5)"
+        )
+        fig.update_yaxes(
+            showgrid=True, 
+            gridwidth=1, 
+            gridcolor="rgba(255,255,255,0.1)",
+            showline=True,
+            linewidth=1,
+            linecolor="rgba(255,255,255,0.5)"
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Display the simulation results
+        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+        st.subheader("Price Results")
+        st.write(f"Initial Price: ${sim_result['token_price'].iloc[0]:.5f}")
+        st.write(f"Final Price: ${sim_result['token_price'].iloc[-1]:.5f}")
+        st.write(f"Change: ${(sim_result['token_price'].iloc[-1] - sim_result['token_price'].iloc[0]):.5f} ({(sim_result['token_price'].iloc[-1] / sim_result['token_price'].iloc[0] - 1) * 100:.2f}%)")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with metric_tabs[2]:
+        # Plot the market cap results
+        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=sim_result['date'], 
+            y=sim_result['market_cap'], 
+            mode='lines', 
+            name='Market Cap'
+        ))
+        
+        fig.update_layout(
+            title="Simulated Market Cap",
+            xaxis_title="Date",
+            yaxis_title="USD",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white")
+        )
+        
+        # Update axes
+        fig.update_xaxes(
+            showgrid=True, 
+            gridwidth=1, 
+            gridcolor="rgba(255,255,255,0.1)",
+            showline=True,
+            linewidth=1,
+            linecolor="rgba(255,255,255,0.5)"
+        )
+        fig.update_yaxes(
+            showgrid=True, 
+            gridwidth=1, 
+            gridcolor="rgba(255,255,255,0.1)",
+            showline=True,
+            linewidth=1,
+            linecolor="rgba(255,255,255,0.5)"
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Display the simulation results
+        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+        st.subheader("Market Cap Results")
+        st.write(f"Initial Market Cap: ${sim_result['market_cap'].iloc[0]:,.2f}")
+        st.write(f"Final Market Cap: ${sim_result['market_cap'].iloc[-1]:,.2f}")
+        st.write(f"Change: ${(sim_result['market_cap'].iloc[-1] - sim_result['market_cap'].iloc[0]):,.2f} ({(sim_result['market_cap'].iloc[-1] / sim_result['market_cap'].iloc[0] - 1) * 100:.2f}%)")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with metric_tabs[3]:
+        # Plot the staking results
+        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=sim_result['date'], 
+            y=sim_result['staked_tokens'], 
+            mode='lines', 
+            name='Staked Tokens'
+        ))
+        
+        fig.update_layout(
+            title="Simulated Staked Tokens",
+            xaxis_title="Date",
+            yaxis_title="Tokens",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white")
+        )
+        
+        # Update axes
+        fig.update_xaxes(
+            showgrid=True, 
+            gridwidth=1, 
+            gridcolor="rgba(255,255,255,0.1)",
+            showline=True,
+            linewidth=1,
+            linecolor="rgba(255,255,255,0.5)"
+        )
+        fig.update_yaxes(
+            showgrid=True, 
+            gridwidth=1, 
+            gridcolor="rgba(255,255,255,0.1)",
+            showline=True,
+            linewidth=1,
+            linecolor="rgba(255,255,255,0.5)"
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Display the simulation results
+        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+        st.subheader("Staking Results")
+        if len(sim_result) > 1:
+            st.write(f"Initial Staked Tokens: {sim_result['staked_tokens'].iloc[0]:,.0f} tokens")
+            st.write(f"Final Staked Tokens: {sim_result['staked_tokens'].iloc[-1]:,.0f} tokens")
+            if sim_result['staked_tokens'].iloc[0] > 0:
+                st.write(f"Change: {(sim_result['staked_tokens'].iloc[-1] - sim_result['staked_tokens'].iloc[0]):,.0f} tokens ({(sim_result['staked_tokens'].iloc[-1] / sim_result['staked_tokens'].iloc[0] - 1) * 100:.2f}%)")
+            else:
+                st.write(f"Change: {(sim_result['staked_tokens'].iloc[-1] - sim_result['staked_tokens'].iloc[0]):,.0f} tokens (N/A%)")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+def display_monte_carlo_results(mc_results, show_confidence_intervals=True, show_percentiles=True):
+    """
+    Display the results of a Monte Carlo simulation.
+    
+    Args:
+        mc_results: Dictionary with Monte Carlo simulation results
+        show_confidence_intervals: Whether to show confidence intervals
+        show_percentiles: Whether to show percentile bands
+    """
+    # Create tabs for Monte Carlo visualization
+    mc_tabs = st.tabs(["Time Series", "Distribution"])
+    
+    with mc_tabs[0]:
+        # Display Monte Carlo time series for different variables
+        variable_tabs = st.tabs(["Token Supply", "Token Price", "Market Cap", "Staking"])
+        
+        with variable_tabs[0]:
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            fig = plot_monte_carlo_results(
+                mc_results, 
+                "circulating_supply", 
+                show_confidence_intervals=show_confidence_intervals,
+                show_percentiles=show_percentiles
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with variable_tabs[1]:
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            fig = plot_monte_carlo_results(
+                mc_results, 
+                "token_price", 
+                show_confidence_intervals=show_confidence_intervals,
+                show_percentiles=show_percentiles
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with variable_tabs[2]:
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            fig = plot_monte_carlo_results(
+                mc_results, 
+                "market_cap", 
+                show_confidence_intervals=show_confidence_intervals,
+                show_percentiles=show_percentiles
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with variable_tabs[3]:
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            fig = plot_monte_carlo_results(
+                mc_results, 
+                "staked_tokens", 
+                show_confidence_intervals=show_confidence_intervals,
+                show_percentiles=show_percentiles
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+    
+    with mc_tabs[1]:
+        # Distribution analysis
+        variable_options = ["token_price", "market_cap", "circulating_supply", "staked_tokens"]
+        selected_variable = st.selectbox(
+            "Select Variable for Distribution Analysis",
+            options=variable_options,
+            format_func=lambda x: x.replace('_', ' ').title()
+        )
+        
+        # Get timesteps
+        timesteps = sorted(mc_results['raw_data']['timestep'].unique())
+        
+        # Timestep slider
+        selected_timestep = st.slider(
+            "Select Timestep", 
+            min_value=min(timesteps), 
+            max_value=max(timesteps), 
+            value=int(len(timesteps) / 2)
+        )
+        
+        # Get the date for the selected timestep
+        timestep_date = mc_results['raw_data'][mc_results['raw_data']['timestep'] == selected_timestep]['date'].iloc[0]
+        st.write(f"Selected Date: {timestep_date}")
+        
+        # Plot distribution
+        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+        hist_fig, stats = plot_distribution_at_timestep(mc_results, selected_variable, selected_timestep)
+        st.plotly_chart(hist_fig, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Display statistics
+        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+        st.subheader("Distribution Statistics")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Mean", f"{stats['mean']:.5f}")
+            st.metric("Standard Deviation", f"{stats['std_dev']:.5f}")
+        with col2:
+            st.metric("Median", f"{stats['median']:.5f}")
+            st.metric("Coefficient of Variation", f"{stats['cv']:.5f}")
+        with col3:
+            st.metric("5th Percentile", f"{stats['percentiles'][0]:.5f}")
+            st.metric("95th Percentile", f"{stats['percentiles'][4]:.5f}")
+        st.markdown('</div>', unsafe_allow_html=True)
+
 def main():
     """Main function to run the Streamlit app."""
     # Set page config
@@ -500,6 +1034,23 @@ def main():
                         step=0.05
                     )
                 
+                # Add Monte Carlo simulation controls
+                st.subheader("Monte Carlo Simulation")
+                enable_monte_carlo = st.checkbox("Enable Monte Carlo Simulation", value=False)
+                
+                if enable_monte_carlo:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        num_runs = st.slider("Number of Runs", 10, 100, 50, step=10)
+                        show_confidence_intervals = st.checkbox("Show Confidence Intervals", value=True)
+                    
+                    with col2:
+                        show_percentiles = st.checkbox("Show Percentile Bands", value=True)
+                else:
+                    num_runs = 1
+                    show_confidence_intervals = True
+                    show_percentiles = True
+                
                 # Run the simulation with cadCAD
                 params = {
                     "staking_share": staking_share, 
@@ -507,222 +1058,39 @@ def main():
                     "staking_apr_multiplier": staking_apr_multiplier,
                     "market_volatility": market_volatility
                 }
-                sim_result = simulation.run_simulation(params)
                 
-                # Create tabs for different metrics
-                metric_tabs = st.tabs(["Token Supply", "Token Price", "Market Cap", "Staking"])
+                # Run button
+                if st.button("Run Simulation"):
+                    with st.spinner(f"Running simulation with {num_runs} {'run' if num_runs == 1 else 'runs'}..."):
+                        sim_result = simulation.run_simulation(params, num_runs=num_runs)
+                        
+                        # Store the results in session state
+                        st.session_state.sim_result = sim_result
+                        st.session_state.enable_monte_carlo = enable_monte_carlo
+                        st.session_state.show_confidence_intervals = show_confidence_intervals
+                        st.session_state.show_percentiles = show_percentiles
                 
-                with metric_tabs[0]:
-                    # Plot the token supply results
-                    st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                    fig = go.Figure()
+                # Check if simulation results exist in session state
+                if 'sim_result' in st.session_state:
+                    sim_result = st.session_state.sim_result
+                    stored_monte_carlo = st.session_state.get('enable_monte_carlo', False)
                     
-                    fig.add_trace(go.Scatter(
-                        x=sim_result['date'], 
-                        y=sim_result['circulating_supply'], 
-                        mode='lines', 
-                        name='Circulating Supply'
-                    ))
-                    
-                    fig.add_trace(go.Scatter(
-                        x=sim_result['date'], 
-                        y=sim_result['token_supply'], 
-                        mode='lines', 
-                        name='Total Supply',
-                        line=dict(dash='dash')
-                    ))
-                    
-                    fig.update_layout(
-                        title="Simulated Token Supply",
-                        xaxis_title="Date",
-                        yaxis_title="Tokens",
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        plot_bgcolor="rgba(0,0,0,0)",
-                        font=dict(color="white")
-                    )
-                    
-                    # Update axes
-                    fig.update_xaxes(
-                        showgrid=True, 
-                        gridwidth=1, 
-                        gridcolor="rgba(255,255,255,0.1)",
-                        showline=True,
-                        linewidth=1,
-                        linecolor="rgba(255,255,255,0.5)"
-                    )
-                    fig.update_yaxes(
-                        showgrid=True, 
-                        gridwidth=1, 
-                        gridcolor="rgba(255,255,255,0.1)",
-                        showline=True,
-                        linewidth=1,
-                        linecolor="rgba(255,255,255,0.5)"
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    # Display the simulation results
-                    st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                    st.subheader("Supply Results")
-                    st.write(f"Initial Supply: {sim_result['circulating_supply'].iloc[0]:,.0f} tokens")
-                    st.write(f"Final Supply: {sim_result['circulating_supply'].iloc[-1]:,.0f} tokens")
-                    st.write(f"Change: {(sim_result['circulating_supply'].iloc[-1] - sim_result['circulating_supply'].iloc[0]):,.0f} tokens ({(sim_result['circulating_supply'].iloc[-1] / sim_result['circulating_supply'].iloc[0] - 1) * 100:.2f}%)")
-                    st.markdown('</div>', unsafe_allow_html=True)
-                
-                with metric_tabs[1]:
-                    # Plot the token price results
-                    st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                    fig = go.Figure()
-                    
-                    fig.add_trace(go.Scatter(
-                        x=sim_result['date'], 
-                        y=sim_result['token_price'], 
-                        mode='lines', 
-                        name='Token Price'
-                    ))
-                    
-                    fig.update_layout(
-                        title="Simulated Token Price",
-                        xaxis_title="Date",
-                        yaxis_title="USD",
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        plot_bgcolor="rgba(0,0,0,0)",
-                        font=dict(color="white")
-                    )
-                    
-                    # Update axes
-                    fig.update_xaxes(
-                        showgrid=True, 
-                        gridwidth=1, 
-                        gridcolor="rgba(255,255,255,0.1)",
-                        showline=True,
-                        linewidth=1,
-                        linecolor="rgba(255,255,255,0.5)"
-                    )
-                    fig.update_yaxes(
-                        showgrid=True, 
-                        gridwidth=1, 
-                        gridcolor="rgba(255,255,255,0.1)",
-                        showline=True,
-                        linewidth=1,
-                        linecolor="rgba(255,255,255,0.5)"
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    # Display the simulation results
-                    st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                    st.subheader("Price Results")
-                    st.write(f"Initial Price: ${sim_result['token_price'].iloc[0]:.5f}")
-                    st.write(f"Final Price: ${sim_result['token_price'].iloc[-1]:.5f}")
-                    st.write(f"Change: ${(sim_result['token_price'].iloc[-1] - sim_result['token_price'].iloc[0]):.5f} ({(sim_result['token_price'].iloc[-1] / sim_result['token_price'].iloc[0] - 1) * 100:.2f}%)")
-                    st.markdown('</div>', unsafe_allow_html=True)
-                
-                with metric_tabs[2]:
-                    # Plot the market cap results
-                    st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                    fig = go.Figure()
-                    
-                    fig.add_trace(go.Scatter(
-                        x=sim_result['date'], 
-                        y=sim_result['market_cap'], 
-                        mode='lines', 
-                        name='Market Cap'
-                    ))
-                    
-                    fig.update_layout(
-                        title="Simulated Market Cap",
-                        xaxis_title="Date",
-                        yaxis_title="USD",
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        plot_bgcolor="rgba(0,0,0,0)",
-                        font=dict(color="white")
-                    )
-                    
-                    # Update axes
-                    fig.update_xaxes(
-                        showgrid=True, 
-                        gridwidth=1, 
-                        gridcolor="rgba(255,255,255,0.1)",
-                        showline=True,
-                        linewidth=1,
-                        linecolor="rgba(255,255,255,0.5)"
-                    )
-                    fig.update_yaxes(
-                        showgrid=True, 
-                        gridwidth=1, 
-                        gridcolor="rgba(255,255,255,0.1)",
-                        showline=True,
-                        linewidth=1,
-                        linecolor="rgba(255,255,255,0.5)"
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    # Display the simulation results
-                    st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                    st.subheader("Market Cap Results")
-                    st.write(f"Initial Market Cap: ${sim_result['market_cap'].iloc[0]:,.2f}")
-                    st.write(f"Final Market Cap: ${sim_result['market_cap'].iloc[-1]:,.2f}")
-                    st.write(f"Change: ${(sim_result['market_cap'].iloc[-1] - sim_result['market_cap'].iloc[0]):,.2f} ({(sim_result['market_cap'].iloc[-1] / sim_result['market_cap'].iloc[0] - 1) * 100:.2f}%)")
-                    st.markdown('</div>', unsafe_allow_html=True)
-                
-                with metric_tabs[3]:
-                    # Plot the staking results
-                    st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                    fig = go.Figure()
-                    
-                    fig.add_trace(go.Scatter(
-                        x=sim_result['date'], 
-                        y=sim_result['staked_tokens'], 
-                        mode='lines', 
-                        name='Staked Tokens'
-                    ))
-                    
-                    fig.update_layout(
-                        title="Simulated Staked Tokens",
-                        xaxis_title="Date",
-                        yaxis_title="Tokens",
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        plot_bgcolor="rgba(0,0,0,0)",
-                        font=dict(color="white")
-                    )
-                    
-                    # Update axes
-                    fig.update_xaxes(
-                        showgrid=True, 
-                        gridwidth=1, 
-                        gridcolor="rgba(255,255,255,0.1)",
-                        showline=True,
-                        linewidth=1,
-                        linecolor="rgba(255,255,255,0.5)"
-                    )
-                    fig.update_yaxes(
-                        showgrid=True, 
-                        gridwidth=1, 
-                        gridcolor="rgba(255,255,255,0.1)",
-                        showline=True,
-                        linewidth=1,
-                        linecolor="rgba(255,255,255,0.5)"
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    # Display the simulation results
-                    st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                    st.subheader("Staking Results")
-                    if len(sim_result) > 1:
-                        st.write(f"Initial Staked Tokens: {sim_result['staked_tokens'].iloc[0]:,.0f} tokens")
-                        st.write(f"Final Staked Tokens: {sim_result['staked_tokens'].iloc[-1]:,.0f} tokens")
-                        if sim_result['staked_tokens'].iloc[0] > 0:
-                            st.write(f"Change: {(sim_result['staked_tokens'].iloc[-1] - sim_result['staked_tokens'].iloc[0]):,.0f} tokens ({(sim_result['staked_tokens'].iloc[-1] / sim_result['staked_tokens'].iloc[0] - 1) * 100:.2f}%)")
-                        else:
-                            st.write(f"Change: {(sim_result['staked_tokens'].iloc[-1] - sim_result['staked_tokens'].iloc[0]):,.0f} tokens (N/A%)")
-                    st.markdown('</div>', unsafe_allow_html=True)
+                    if stored_monte_carlo:
+                        # Display Monte Carlo results
+                        display_monte_carlo_results(
+                            sim_result, 
+                            show_confidence_intervals=st.session_state.get('show_confidence_intervals', True),
+                            show_percentiles=st.session_state.get('show_percentiles', True)
+                        )
+                    else:
+                        # Display single run results
+                        display_single_run_results(sim_result)
+                elif not st.session_state.get('sim_result_displayed', False):
+                    # Initial run when app loads
+                    with st.spinner("Running initial simulation..."):
+                        sim_result = simulation.run_simulation(params, num_runs=1)
+                        display_single_run_results(sim_result)
+                        st.session_state.sim_result_displayed = True
     
     with tab3:
         st.header("Scenario Analysis")
