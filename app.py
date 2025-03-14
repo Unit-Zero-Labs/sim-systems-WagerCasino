@@ -6,6 +6,10 @@ import plotly.figure_factory as ff
 from tokenomics_data import TokenomicsData, parse_csv
 from simulate import TokenomicsSimulation
 
+########################################################
+####### UNIT ZERO LABS TOKEN SIMULATION ENGINE #########
+########################################################
+
 def plot_token_buckets(data):
     """Plot the token buckets and circulating supply over time."""
     fig = go.Figure()
@@ -1034,7 +1038,7 @@ def main():
                         step=0.05
                     )
                 
-                # Add Monte Carlo simulation controls
+                # Monte Carlo simulation controls
                 st.subheader("Monte Carlo Simulation")
                 enable_monte_carlo = st.checkbox("Enable Monte Carlo Simulation", value=False)
                 
@@ -1051,7 +1055,7 @@ def main():
                     show_confidence_intervals = True
                     show_percentiles = True
                 
-                # Run the simulation with cadCAD
+                # Run sim with radCAD
                 params = {
                     "staking_share": staking_share, 
                     "token_price": token_price,
