@@ -2,6 +2,11 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 
+########################################################
+####### UNIT ZERO LABS TOKEN SIMULATION ENGINE #########
+########################################################
+
+
 class TokenomicsData:
     def __init__(self):
         self.static_params = {}

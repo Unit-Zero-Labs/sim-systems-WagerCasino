@@ -5,6 +5,11 @@ from typing import Dict, List, Any, Tuple, Union
 from radcad import Model, Simulation, Experiment
 from radcad.engine import Engine, Backend
 
+########################################################
+####### UNIT ZERO LABS TOKEN SIMULATION ENGINE #########
+########################################################
+
+
 class TokenomicsSimulation:
     """
     A class for running tokenomics simulations using radCAD.
