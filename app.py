@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.figure_factory as ff
-from tokenomics_data import TokenomicsData, parse_csv
+from tokenomics_data import TokenomicsData, generate_data_from_radcad_inputs
 from simulate import TokenomicsSimulation
 
 ########################################################
@@ -942,279 +942,206 @@ def main():
     st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)  # Add some bottom padding
     
     # Create tabs
-    tab1, tab2, tab3 = st.tabs(["Analysis", "Simulation", "Scenario Analysis"])
+    tab_load_data, tab_data_tables, tab_simulation, tab_scenario_analysis = st.tabs(["Load Data", "Data Tables", "Simulation", "Scenario Analysis"])
     
-    with tab1:
-        st.header("Analysis")
+    # Initialize session state for tokenomics_data_obj if it doesn't exist
+    if 'tokenomics_data_obj' not in st.session_state:
+        st.session_state.tokenomics_data_obj = None
+    if 'radcad_uploaded_file_name' not in st.session_state:
+        st.session_state.radcad_uploaded_file_name = None
+
+    with tab_load_data:
+        st.header("Load radCAD Inputs")
         
         # File uploader
-        uploaded_file = st.file_uploader("Upload Data Tables CSV", type="csv")
+        uploaded_file = st.file_uploader("Upload radCAD Inputs CSV", type="csv", key="radcad_uploader_main")
         
-        if uploaded_file:
-            # Parse the CSV file
-            data = parse_csv(uploaded_file)
+        if uploaded_file is not None:
+            # Check if the uploaded file is different from the one already processed
+            if st.session_state.radcad_uploaded_file_name != uploaded_file.name:
+                with st.spinner("Processing radCAD Inputs CSV..."):
+                    st.session_state.tokenomics_data_obj = generate_data_from_radcad_inputs(uploaded_file)
+                    st.session_state.radcad_uploaded_file_name = uploaded_file.name # Store the name of the processed file
+                    if st.session_state.tokenomics_data_obj:
+                        st.success("Successfully processed radCAD Inputs CSV!")
+                        # No rerun here, let other tabs pick up from session_state
+                    else:
+                        st.error("Failed to process radCAD Inputs CSV. Check file format and content.")
+                        st.session_state.tokenomics_data_obj = None # Ensure it's None on failure
+            elif st.session_state.tokenomics_data_obj is None: # File with same name but failed previously
+                 with st.spinner("Re-processing radCAD Inputs CSV..."):
+                    st.session_state.tokenomics_data_obj = generate_data_from_radcad_inputs(uploaded_file)
+                    st.session_state.radcad_uploaded_file_name = uploaded_file.name
+                    if st.session_state.tokenomics_data_obj:
+                        st.success("Successfully processed radCAD Inputs CSV!")
+                    else:
+                        st.error("Failed to process radCAD Inputs CSV. Check file format and content.")
+                        st.session_state.tokenomics_data_obj = None
+            else:
+                st.info(f"Using previously loaded data from '{uploaded_file.name}'. To reload, upload a different file or clear session.")
+        else:
+            st.info("Please upload your radCAD Inputs CSV file to begin.")
+            # Clear session state if no file is uploaded to allow re-upload of same file after removal
+            if st.session_state.radcad_uploaded_file_name is not None:
+                st.session_state.tokenomics_data_obj = None
+                st.session_state.radcad_uploaded_file_name = None
+
+    with tab_data_tables:
+        st.header("Data Tables")
+        data = st.session_state.get('tokenomics_data_obj')
+
+        if data is not None:
+            # Display the charts with custom container styling
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            st.plotly_chart(plot_token_buckets(data), use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
             
-            if data:
-                # Display the charts with custom container styling
-                st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                st.plotly_chart(plot_token_buckets(data), use_container_width=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-                
-                st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                st.plotly_chart(plot_price(data), use_container_width=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-                
-                st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                st.plotly_chart(plot_valuations(data), use_container_width=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-                
-                st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                st.plotly_chart(plot_dex_liquidity(data), use_container_width=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-                
-                st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                st.plotly_chart(plot_utility_allocations(data), use_container_width=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-                
-                st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                st.plotly_chart(plot_monthly_utility(data), use_container_width=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-                
-                st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                st.plotly_chart(plot_staking_apr(data), use_container_width=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-    
-    with tab2:
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            st.plotly_chart(plot_price(data), use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            st.plotly_chart(plot_valuations(data), use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            st.plotly_chart(plot_dex_liquidity(data), use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            st.plotly_chart(plot_utility_allocations(data), use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            st.plotly_chart(plot_monthly_utility(data), use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            st.plotly_chart(plot_staking_apr(data), use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.info("Please upload and process a radCAD Inputs CSV in the 'Load Data' tab to view data tables.")
+
+    with tab_simulation:
         st.header("Simulation")
+        data_for_simulation = st.session_state.get('tokenomics_data_obj')
         
-        if uploaded_file:
-            # Parse the CSV file if not already parsed
-            if 'data' not in locals():
-                data = parse_csv(uploaded_file)
+        if data_for_simulation is not None:
+            # Create a TokenomicsSimulation instance
+            simulation = TokenomicsSimulation(data_for_simulation)
             
-            if data:
-                # Create a TokenomicsSimulation instance
-                simulation = TokenomicsSimulation(data)
+            # Parameter sliders
+            st.subheader("Simulation Parameters")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                staking_share = st.slider(
+                    "Staking Share", 
+                    0.0, 1.0, 
+                    0.75,  # Default value
+                    step=0.01
+                )
                 
-                # Parameter sliders
-                st.subheader("Simulation Parameters")
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    staking_share = st.slider(
-                        "Staking Share", 
-                        0.0, 1.0, 
-                        0.75,  # Default value
-                        step=0.01
-                    )
+                staking_apr_multiplier = st.slider(
+                    "Staking APR Multiplier", 
+                    0.5, 2.0, 
+                    1.0,  # Default value
+                    step=0.1
+                )
+            
+            with col2:
+                # Fix: Ensure token_price is a float before using it in the slider
+                default_price = data_for_simulation.token_price
+                if isinstance(default_price, list):
+                    default_price = default_price[0] if default_price else 0.03
+                elif not isinstance(default_price, (int, float)) or pd.isna(default_price):
+                    default_price = 0.03
                     
-                    staking_apr_multiplier = st.slider(
-                        "Staking APR Multiplier", 
-                        0.5, 2.0, 
-                        1.0,  # Default value
-                        step=0.1
-                    )
+                token_price = st.slider(
+                    "Token Launch Price", 
+                    0.01, 0.05, 
+                    float(default_price),  # Ensure it's a float
+                    step=0.001,
+                    format="$%.5f"
+                )
+                
+                market_volatility = st.slider(
+                    "Market Volatility", 
+                    0.0, 1.0, 
+                    0.2,  # Default value
+                    step=0.05
+                )
+            
+            # Monte Carlo simulation controls
+            st.subheader("Monte Carlo Simulation")
+            enable_monte_carlo = st.checkbox("Enable Monte Carlo Simulation", value=False)
+            
+            if enable_monte_carlo:
+                col1, col2 = st.columns(2)
+                with col1:
+                    num_runs = st.slider("Number of Runs", 10, 100, 50, step=10)
+                    show_confidence_intervals = st.checkbox("Show Confidence Intervals", value=True)
                 
                 with col2:
-                    # Fix: Ensure token_price is a float before using it in the slider
-                    default_price = data.token_price
-                    if isinstance(default_price, list):
-                        default_price = default_price[0] if default_price else 0.03
-                    elif not isinstance(default_price, (int, float)) or pd.isna(default_price):
-                        default_price = 0.03
-                        
-                    token_price = st.slider(
-                        "Token Launch Price", 
-                        0.01, 0.05, 
-                        float(default_price),  # Ensure it's a float
-                        step=0.001,
-                        format="$%.5f"
-                    )
-                    
-                    market_volatility = st.slider(
-                        "Market Volatility", 
-                        0.0, 1.0, 
-                        0.2,  # Default value
-                        step=0.05
-                    )
-                
-                # Monte Carlo simulation controls
-                st.subheader("Monte Carlo Simulation")
-                enable_monte_carlo = st.checkbox("Enable Monte Carlo Simulation", value=False)
-                
-                if enable_monte_carlo:
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        num_runs = st.slider("Number of Runs", 10, 100, 50, step=10)
-                        show_confidence_intervals = st.checkbox("Show Confidence Intervals", value=True)
-                    
-                    with col2:
-                        show_percentiles = st.checkbox("Show Percentile Bands", value=True)
-                else:
-                    num_runs = 1
-                    show_confidence_intervals = True
-                    show_percentiles = True
-                
-                # Run sim with radCAD
-                params = {
-                    "staking_share": staking_share, 
-                    "token_price": token_price,
-                    "staking_apr_multiplier": staking_apr_multiplier,
-                    "market_volatility": market_volatility
-                }
-                
-                # Run button
-                if st.button("Run Simulation"):
-                    with st.spinner(f"Running simulation with {num_runs} {'run' if num_runs == 1 else 'runs'}..."):
-                        sim_result = simulation.run_simulation(params, num_runs=num_runs)
-                        
-                        # Store the results in session state
-                        st.session_state.sim_result = sim_result
-                        st.session_state.enable_monte_carlo = enable_monte_carlo
-                        st.session_state.show_confidence_intervals = show_confidence_intervals
-                        st.session_state.show_percentiles = show_percentiles
-                
-                # Check if simulation results exist in session state
-                if 'sim_result' in st.session_state:
-                    sim_result = st.session_state.sim_result
-                    stored_monte_carlo = st.session_state.get('enable_monte_carlo', False)
-                    
-                    if stored_monte_carlo:
-                        # Display Monte Carlo results
-                        display_monte_carlo_results(
-                            sim_result, 
-                            show_confidence_intervals=st.session_state.get('show_confidence_intervals', True),
-                            show_percentiles=st.session_state.get('show_percentiles', True)
-                        )
-                    else:
-                        # Display single run results
-                        display_single_run_results(sim_result)
-                elif not st.session_state.get('sim_result_displayed', False):
-                    # Initial run when app loads
-                    with st.spinner("Running initial simulation..."):
-                        sim_result = simulation.run_simulation(params, num_runs=1)
-                        display_single_run_results(sim_result)
-                        st.session_state.sim_result_displayed = True
-    
-    with tab3:
-        st.header("Scenario Analysis")
-        
-        if uploaded_file:
-            # Parse the CSV file if not already parsed
-            if 'data' not in locals():
-                data = parse_csv(uploaded_file)
-            
-            if data:
-                # Create a TokenomicsSimulation instance
-                simulation = TokenomicsSimulation(data)
-                
-                st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                
-                # Define scenarios
-                st.subheader("Define Scenarios")
-                
-                # Allow user to create multiple scenarios
-                num_scenarios = st.number_input("Number of Scenarios", min_value=1, max_value=5, value=2)
-                
-                scenarios = []
-                for i in range(num_scenarios):
-                    st.write(f"### Scenario {i+1}")
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        name = st.text_input(f"Scenario Name", value=f"Scenario {i+1}", key=f"name_{i}")
-                        staking_share = st.slider(
-                            "Staking Share", 
-                            0.0, 1.0, 
-                            0.5 + i*0.25,  # Different defaults for different scenarios
-                            step=0.01,
-                            key=f"staking_{i}"
-                        )
-                    
-                    with col2:
-                        token_price = st.slider(
-                            "Token Launch Price", 
-                            0.01, 0.05, 
-                            0.03 + i*0.005,  # Different defaults
-                            step=0.001,
-                            format="$%.5f",
-                            key=f"price_{i}"
-                        )
-                        market_volatility = st.slider(
-                            "Market Volatility", 
-                            0.0, 1.0, 
-                            0.2,
-                            step=0.05,
-                            key=f"volatility_{i}"
-                        )
-                    
-                    scenarios.append({
-                        "name": name,
-                        "params": {
-                            "staking_share": staking_share,
-                            "token_price": token_price,
-                            "market_volatility": market_volatility
-                        }
-                    })
-                
-                # Run button
-                if st.button("Run Scenario Analysis"):
-                    # Run simulations for all scenarios
-                    results = simulation.run_scenario_comparison(scenarios)
-                    
-                    # Display comparative charts
-                    metrics = ["circulating_supply", "token_price", "market_cap", "staked_tokens"]
-                    metric_names = ["Circulating Supply", "Token Price", "Market Cap", "Staked Tokens"]
-                    
-                    for metric, name in zip(metrics, metric_names):
-                        fig = go.Figure()
-                        
-                        for scenario_name, result in results.items():
-                            fig.add_trace(go.Scatter(
-                                x=result['date'], 
-                                y=result[metric], 
-                                mode='lines', 
-                                name=scenario_name
-                            ))
-                        
-                        fig.update_layout(
-                            title=f"Scenario Comparison: {name}",
-                            xaxis_title="Date",
-                            yaxis_title=name,
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            plot_bgcolor="rgba(0,0,0,0)",
-                            font=dict(color="white")
-                        )
-                        
-                        # Update axes
-                        fig.update_xaxes(
-                            showgrid=True, 
-                            gridwidth=1, 
-                            gridcolor="rgba(255,255,255,0.1)",
-                            showline=True,
-                            linewidth=1,
-                            linecolor="rgba(255,255,255,0.5)"
-                        )
-                        fig.update_yaxes(
-                            showgrid=True, 
-                            gridwidth=1, 
-                            gridcolor="rgba(255,255,255,0.1)",
-                            showline=True,
-                            linewidth=1,
-                            linecolor="rgba(255,255,255,0.5)"
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-                
-                st.markdown('</div>', unsafe_allow_html=True)
+                    show_percentiles = st.checkbox("Show Percentile Bands", value=True)
             else:
-                st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                st.write("Please upload a CSV file to use the Scenario Analysis tab.")
-                st.markdown('</div>', unsafe_allow_html=True)
+                num_runs = 1
+                show_confidence_intervals = True
+                show_percentiles = True
+            
+            # Run sim with radCAD
+            params = {
+                "staking_share": staking_share, 
+                "token_price": token_price,
+                "staking_apr_multiplier": staking_apr_multiplier,
+                "market_volatility": market_volatility
+            }
+            
+            # Run button
+            if st.button("Run Simulation"):
+                with st.spinner(f"Running simulation with {num_runs} {'run' if num_runs == 1 else 'runs'}..."):
+                    sim_result = simulation.run_simulation(params, num_runs=num_runs)
+                    
+                    # Store the results in session state
+                    st.session_state.sim_result = sim_result
+                    st.session_state.enable_monte_carlo = enable_monte_carlo
+                    st.session_state.show_confidence_intervals = show_confidence_intervals
+                    st.session_state.show_percentiles = show_percentiles
+            
+            # Check if simulation results exist in session state
+            if 'sim_result' in st.session_state:
+                sim_result = st.session_state.sim_result
+                stored_monte_carlo = st.session_state.get('enable_monte_carlo', False)
+                
+                if stored_monte_carlo:
+                    # Display Monte Carlo results
+                    display_monte_carlo_results(
+                        sim_result, 
+                        show_confidence_intervals=st.session_state.get('show_confidence_intervals', True),
+                        show_percentiles=st.session_state.get('show_percentiles', True)
+                    )
+                else:
+                    # Display single run results
+                    display_single_run_results(sim_result)
+            elif not st.session_state.get('sim_result_displayed', False):
+                # Initial run when app loads
+                with st.spinner("Running initial simulation..."):
+                    sim_result = simulation.run_simulation(params, num_runs=1)
+                    display_single_run_results(sim_result)
+                    st.session_state.sim_result_displayed = True
         else:
-            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-            st.write("Please upload a CSV file to use the Scenario Analysis tab.")
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.info("Please upload and process a radCAD Inputs CSV in the 'Load Data' tab to run simulations.")
+
+    with tab_scenario_analysis:
+        st.header("Scenario Analysis")
+        data_for_scenario = st.session_state.get('tokenomics_data_obj')
+
+        if data_for_scenario is not None:
+            # Example: Allow users to define multiple scenarios based on the initial data
+            st.write("Define scenarios by adjusting parameters from the uploaded radCAD inputs.")
+            # Placeholder for scenario definition UI and results display
+        else:
+            st.info("Please upload and process a radCAD Inputs CSV in the 'Load Data' tab for scenario analysis.")
 
 if __name__ == "__main__":
     main() 
