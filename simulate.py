@@ -4,6 +4,7 @@ import random
 from typing import Dict, List, Any, Tuple, Union
 from radcad import Model, Simulation, Experiment
 from radcad.engine import Engine, Backend
+import streamlit as st
 
 ########################################################
 ####### UNIT ZERO LABS TOKEN SIMULATION ENGINE #########
@@ -37,13 +38,24 @@ class TokenomicsSimulation:
         Returns:
             Dictionary representing the initial state
         """
-        # Get initial values from the data
-        initial_total_supply = self.data.static_params.get("Initial Total Supply of Tokens", 888000000)
+        # Get initial values from the data - try both keys
+        initial_total_supply = self.data.static_params.get("initial_total_supply")
         
+        # If not found with lowercase key, try the capitalized key
+        if initial_total_supply is None:
+            initial_total_supply = self.data.static_params.get("Initial Total Supply of Tokens")
+            
+        # If still not found, use default value
+        if initial_total_supply is None:
+            initial_total_supply = 888000000
+            
         # Calculate initial circulating supply (sum of all buckets except Liquidity Pool)
         initial_circulating_supply = 0
-        if not self.data.vesting_cumulative.empty and "Liquidity Pool" in self.data.vesting_cumulative.index:
-            initial_circulating_supply = self.data.vesting_cumulative.drop("Liquidity Pool", errors='ignore').sum().iloc[0]
+        if not self.data.vesting_cumulative.empty:
+            if "Liquidity Pool" in self.data.vesting_cumulative.index:
+                initial_circulating_supply = self.data.vesting_cumulative.drop("Liquidity Pool", errors='ignore').sum().iloc[0]
+            else:
+                initial_circulating_supply = self.data.vesting_cumulative.sum().iloc[0]
         
         # Get initial liquidity pool tokens
         initial_lp_tokens = 0
