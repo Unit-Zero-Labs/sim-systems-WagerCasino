@@ -1,5 +1,19 @@
 # Unit Zero Labs Tokenomics Engine Documentation
 
+## Running the Application
+
+To run the Tokenomics Engine, execute the following commands:
+
+```bash
+# Install required packages
+pip install -r requirements.txt
+
+# Run the Streamlit application
+streamlit run app.py
+```
+
+The application will open in your default web browser, typically at http://localhost:8501
+
 ## Table of Contents
 
 1. [Overview](#overview)
@@ -9,8 +23,11 @@
 5. [Simulation Engine](#simulation-engine)
 6. [Visualization Features](#visualization-features)
 7. [Monte Carlo Simulation](#monte-carlo-simulation)
-8. [Installation and Usage](#installation-and-usage)
-9. [Technical Requirements](#technical-requirements)
+8. [Caching System](#caching-system)
+9. [Error Handling](#error-handling)
+10. [Installation and Usage](#installation-and-usage)
+11. [Technical Requirements](#technical-requirements)
+12. [Testing](#testing)
 
 ## Overview
 
@@ -25,19 +42,41 @@ The tool is built as a Streamlit web application with a Python backend using the
 
 ## Architecture
 
-The application is structured around three main components:
+The application is structured around the following components:
 
-1. **Data Input and Parsing** (`tokenomics_data.py`): Handles the loading and parsing of tokenomics configuration data, typically from CSV files.
-
-2. **Simulation Engine** (`simulate.py`): Implements the system dynamics model using cadCAD to perform simulations of token behavior over time.
-
-3. **Web Interface** (`app.py`): Provides an interactive Streamlit frontend with visualization capabilities.
+```
+sim-systems/
+├── app.py                      # Main entry point
+├── simulate.py                 # Original simulation code
+├── tokenomics_data.py          # Original data processing code
+├── visualization/              # Visualization components
+│   ├── __init__.py
+│   ├── charts.py               # All plotting functions
+│   ├── components.py           # Reusable UI components
+│   └── styles.py               # CSS styles and theming
+├── logic/                      # Business logic
+│   ├── __init__.py
+│   ├── data_manager.py         # Data loading and transformations
+│   ├── state_manager.py        # Session state management
+│   └── monte_carlo.py          # Monte Carlo specific logic
+├── utils/                      # Utilities
+│   ├── __init__.py
+│   ├── config.py               # Configuration management
+│   ├── cache.py                # Caching utilities
+│   ├── validators.py           # Input validation
+│   └── error_handler.py        # Error handling
+└── tests/                      # Testing framework
+    ├── __init__.py
+    └── test_charts.py          # Example test file
+```
 
 The application follows a modular design where data parsing, simulation logic, and visualization are separated, making it easier to maintain and extend the codebase.
 
 ## Core Components
 
-### `TokenomicsData` Class
+### Data Layer
+
+#### `TokenomicsData` Class
 
 Serves as the central data structure for storing tokenomics parameters and time-series data:
 
@@ -46,23 +85,101 @@ Serves as the central data structure for storing tokenomics parameters and time-
 - Financial time-series data (price, market cap, etc.)
 - Static parameters for simulation
 
-### `TokenomicsSimulation` Class
+#### `DataManager` Class
+
+Handles the loading and processing of tokenomics data:
+
+- Validates input data
+- Processes radCAD inputs
+- Provides methods for exporting data
+- Calculates summary statistics
+
+### Business Logic
+
+#### `TokenomicsSimulation` Class
 
 Implements the simulation logic:
 
 - Sets up initial state based on parsed data
 - Defines policy functions for token dynamics
 - Defines state update functions
-- Provides methods for running simulations and analyzing results
+- Provides methods for running simulations
 
-### Streamlit App (`app.py`)
+#### `MonteCarloSimulator` Class
 
-Handles the user interface:
+Optimizes Monte Carlo simulations:
 
-- Data upload and processing
-- Interactive parameter adjustment
-- Visualization of input data and simulation results
-- Tab-based navigation for different features
+- Runs simulations in parallel for better performance
+- Provides progress tracking
+- Calculates statistical measures from multiple runs
+
+#### `StateManager` Class
+
+Manages application state:
+
+- Initializes and maintains session state
+- Provides a consistent interface for state access
+- Handles state updates from UI interactions
+
+### Presentation Layer
+
+#### Visualization Module
+
+Contains all the plotting functions:
+
+- Chart generation for token data
+- Visualization of simulation results
+- Monte Carlo result visualization
+
+#### Components Module
+
+Reusable UI components:
+
+- Headers and layout elements
+- Form controls for simulation parameters
+- Results display components
+
+#### Styles Module
+
+CSS styling for the application:
+
+- Consistent theming across components
+- Responsive design elements
+- Custom styling for Streamlit components
+
+### Utilities
+
+#### Configuration Management
+
+Centralized configuration system:
+
+- Default values for simulation parameters
+- UI configuration
+- Cache settings
+
+#### Caching System
+
+Optimizes performance through caching:
+
+- Memory and persistent caching
+- Time-to-live management
+- Cache statistics
+
+#### Error Handling
+
+Consistent error management:
+
+- Error logging
+- User-friendly error messages
+- Exception wrapping
+
+#### Validators
+
+Input validation utilities:
+
+- Parameter validation
+- Data format validation
+- Error message formatting
 
 ## Data Models
 
@@ -164,6 +281,7 @@ Functions that update system state:
 The Monte Carlo simulation feature:
 
 - Runs the model multiple times with different random seeds
+- Uses parallel processing for improved performance
 - Captures the range of possible outcomes for key metrics
 - Calculates statistical measures (mean, standard deviation, percentiles)
 - Visualizes the distribution of outcomes
@@ -183,6 +301,46 @@ The system provides tools for analyzing Monte Carlo results:
 - Confidence intervals for assessing prediction reliability
 - Percentile bands for understanding the range of outcomes
 - Probability distributions for detailed analysis at specific points in time
+
+## Caching System
+
+### Memory Cache
+
+- Fast in-memory cache for frequently accessed data
+- Automatic cache size management
+- Access and update time tracking
+
+### Persistent Cache
+
+- File-based caching for data that persists between sessions
+- Automatic cache invalidation
+- Support for time-to-live settings
+
+### Decorator Interface
+
+- `@cached` decorator for easy function caching
+- `@st_cache_data` decorator compatible with Streamlit's caching system
+- Cache statistics and monitoring
+
+## Error Handling
+
+### Error Logging
+
+- Centralized error logging
+- Context-aware error messages
+- Support for detailed error information
+
+### User Feedback
+
+- Consistent error presentation in the UI
+- Appropriate error levels (info, warning, error)
+- Detailed error information for debugging
+
+### Validation System
+
+- Input parameter validation
+- Data format and consistency validation
+- Helpful error messages for invalid inputs
 
 ## Installation and Usage
 
@@ -226,39 +384,31 @@ The application expects a CSV file with the following structure:
 - Initial Value: Value of the parameter
 - Other optional columns for min/max values, units, comments
 
-## File Structure Explanation
+## Testing
 
-- `app.py`: Main Streamlit application with UI and visualization logic
-- `tokenomics_data.py`: Data parsing and processing
-- `simulate.py`: Simulation engine using cadCAD
-- `docs/`: Contains reference data files
-- `public/`: Contains static assets like logos
+### Unit Tests
 
-## Data Processing Flow
+The application includes unit tests for key components:
 
-1. **Data Input**: User uploads radCAD inputs CSV file
-2. **Parsing**: System parses parameters and generates time-series data
-3. **Visualization**: Initial data is visualized in the Data Tables tab
-4. **Simulation Setup**: User adjusts simulation parameters
-5. **Simulation Run**: System runs simulation with specified parameters
-6. **Results Analysis**: Results are visualized and analyzed
+- Chart generation
+- Data processing
+- Simulation logic
 
-## Simulation Parameters
+### Running Tests
 
-Key parameters that can be adjusted for simulation:
+Execute the tests using Python's unittest framework:
 
-- **Staking Share**: Percentage of circulating supply that is staked
-- **Token Launch Price**: Initial price of the token at launch
-- **Staking APR Multiplier**: Adjustment factor for staking APR
-- **Market Volatility**: Level of randomness in price movements
+```bash
+python -m unittest discover tests
+```
 
-## Monte Carlo Specific Parameters
+### Test Coverage
 
-Additional parameters for Monte Carlo simulation:
+The test framework focuses on:
 
-- **Number of Runs**: Number of simulation runs to perform
-- **Confidence Intervals**: Whether to show 95% confidence intervals
-- **Percentile Bands**: Whether to show percentile bands
+- Ensuring visualizations work correctly
+- Validating data processing logic
+- Testing simulation calculations
 
 ---
 
