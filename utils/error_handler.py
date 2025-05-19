@@ -11,7 +11,7 @@ import logging
 
 # Set up logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.ERROR,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout)
@@ -29,7 +29,7 @@ class ErrorHandler:
     @staticmethod
     def log_error(error: Exception, context: Optional[str] = None) -> None:
         """
-        Log an error with optional context.
+        Log critical errors with optional context.
         
         Args:
             error: The exception to log
@@ -38,12 +38,11 @@ class ErrorHandler:
         error_traceback = traceback.format_exc()
         error_message = str(error)
         
+        # Only log critical errors to reduce noise
         if context:
-            logger.error(f"Error in {context}: {error_message}")
-            logger.debug(error_traceback)
+            logger.error(f"Critical error in {context}: {error_message}")
         else:
-            logger.error(f"Error: {error_message}")
-            logger.debug(error_traceback)
+            logger.error(f"Critical error: {error_message}")
     
     @staticmethod
     def show_error(error_message: str, error_detail: Optional[str] = None) -> None:

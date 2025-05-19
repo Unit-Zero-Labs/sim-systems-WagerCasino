@@ -70,7 +70,7 @@ def main():
                 data = DataManager.load_radcad_inputs(uploaded_file)
                 if data:
                     StateManager.set_data(data, uploaded_file.name)
-                    st.success("Successfully processed radCAD Inputs CSV!")
+                    st.success("Data Uploaded Successfully")
                 else:
                     st.error("Failed to process radCAD Inputs CSV. Check file format and content.")
                     StateManager.clear_data()

@@ -8,6 +8,7 @@ import plotly.figure_factory as ff
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Tuple, Any, Optional, Union
+import streamlit as st
 
 
 def apply_chart_styling(fig: go.Figure) -> go.Figure:
@@ -61,6 +62,37 @@ def plot_token_buckets(data: Any) -> go.Figure:
     """
     fig = go.Figure()
     
+    # Debug info
+    st.info(f"Vesting series buckets: {data.vesting_series.index.tolist() if not data.vesting_series.empty else 'Empty'}")
+    st.info(f"Vesting cumulative buckets: {data.vesting_cumulative.index.tolist() if not data.vesting_cumulative.empty else 'Empty'}")
+    
+    # Check if we have buckets to plot
+    if data.vesting_cumulative.empty:
+        # Fall back to showing just the total supply as a flat line
+        if hasattr(data, 'static_params') and 'initial_total_supply' in data.static_params:
+            initial_total_supply = data.static_params['initial_total_supply']
+            fig.add_trace(go.Scatter(
+                x=data.dates, 
+                y=[initial_total_supply] * len(data.dates), 
+                mode='lines', 
+                name='Total Supply'
+            ))
+            st.warning("No vesting schedules found. Showing only total supply as a flat line.")
+        else:
+            st.error("No vesting schedules or total supply data found. Cannot create token buckets chart.")
+        
+        fig.update_layout(
+            title="Project Token Buckets & Token Supply",
+            xaxis_title="Date",
+            yaxis_title="Tokens",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        
+        return apply_chart_styling(fig)
+    
+    # Count the actual number of added traces to track if we added anything
+    trace_count = 0
+    
     # Add traces for each token bucket
     for bucket in data.vesting_series.index:
         if bucket and bucket != "SUM":  # Skip empty or summary rows
@@ -70,23 +102,58 @@ def plot_token_buckets(data: Any) -> go.Figure:
                 mode='lines', 
                 name=bucket
             ))
+            trace_count += 1
     
-    # Add circulating supply (sum of all buckets except Liquidity Pool)
-    if "Liquidity Pool" in data.vesting_cumulative.index:
-        circulating_supply = data.vesting_cumulative.drop("Liquidity Pool", errors='ignore').sum()
+    # Add circulating supply and unvested supply
+    initial_total_supply = data.static_params.get('initial_total_supply', 0)
+    
+    if trace_count > 0:  # Only if we have at least one bucket
+        # Add circulating supply (sum of all buckets except Liquidity Pool)
+        has_liquidity_pool = "Liquidity Pool" in data.vesting_cumulative.index
+        circulating_supply = data.vesting_cumulative.drop("Liquidity Pool", errors='ignore').sum() if has_liquidity_pool else data.vesting_cumulative.sum()
         fig.add_trace(go.Scatter(
             x=data.dates, 
             y=circulating_supply, 
             mode='lines', 
             name='Circulating Supply',
-            line=dict(width=3, dash='dash')
+            line=dict(width=3, dash='dash', color='coral')
         ))
+        
+        # Add unvested supply line
+        if initial_total_supply > 0:
+            vested_supply = data.vesting_cumulative.sum()
+            unvested_supply = [initial_total_supply - v for v in vested_supply]
+            fig.add_trace(go.Scatter(
+                x=data.dates, 
+                y=unvested_supply, 
+                mode='lines', 
+                name='Unvested Supply',
+                line=dict(width=2, dash='dot', color='aqua')
+            ))
+    else:
+        # No buckets found, show the warning
+        st.warning("No token buckets found in the data. Chart may be incomplete.")
+    
+    # Add total supply as a flat line
+    if initial_total_supply > 0:
+        holding_supply = [initial_total_supply] * len(data.dates)
+        fig.add_trace(go.Scatter(
+            x=data.dates, 
+            y=holding_supply, 
+            mode='lines', 
+            name='Holding Supply',
+            line=dict(width=2, dash='dash', color='gray')
+        ))
+    
+    # Set y-axis range to ensure it's scaled properly
+    y_max = max(initial_total_supply * 1.1, data.vesting_cumulative.values.max() * 1.1) if not data.vesting_cumulative.empty else initial_total_supply * 1.1
     
     fig.update_layout(
         title="Project Token Buckets & Token Supply",
         xaxis_title="Date",
         yaxis_title="Tokens",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        yaxis=dict(range=[0, y_max])
     )
     
     return apply_chart_styling(fig)

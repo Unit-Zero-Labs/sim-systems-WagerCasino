@@ -47,11 +47,8 @@ class TokenomicsSimulation:
             
         # If still not found, use default value
         if initial_total_supply is None:
-            st.warning("Initial total supply not found in data, using default value of 888,000,000")
             initial_total_supply = 888000000
             
-        st.info(f"Simulation using initial_total_supply: {initial_total_supply}")
-        
         # Calculate initial circulating supply (sum of all buckets except Liquidity Pool)
         initial_circulating_supply = 0
         if not self.data.vesting_cumulative.empty:
@@ -59,9 +56,6 @@ class TokenomicsSimulation:
                 initial_circulating_supply = self.data.vesting_cumulative.drop("Liquidity Pool", errors='ignore').sum().iloc[0]
             else:
                 initial_circulating_supply = self.data.vesting_cumulative.sum().iloc[0]
-                st.info("'Liquidity Pool' not found in vesting_cumulative, using total sum for initial circulating supply")
-        
-        st.info(f"Initial circulating supply: {initial_circulating_supply}")
         
         # Get initial liquidity pool tokens
         initial_lp_tokens = 0

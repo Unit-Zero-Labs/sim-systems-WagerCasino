@@ -167,7 +167,6 @@ class MonteCarloSimulator:
         for var in state_vars:
             # Make sure the variable exists in the raw data
             if var not in raw_data.columns:
-                st.warning(f"Variable '{var}' not found in simulation results. Skipping.")
                 continue
                 
             # Initialize DataFrames for statistics
@@ -183,7 +182,6 @@ class MonteCarloSimulator:
                 
                 if len(timestep_data) == 0:
                     # Skip if no data for this timestep
-                    st.warning(f"No data for timestep {t} and variable {var}. Skipping.")
                     continue
                 
                 # Calculate mean and standard deviation
@@ -197,7 +195,6 @@ class MonteCarloSimulator:
                 try:
                     percentiles = timestep_data.quantile([0.05, 0.25, 0.5, 0.75, 0.95]).values
                 except Exception as e:
-                    st.warning(f"Error calculating percentiles for timestep {t}, variable {var}: {e}")
                     percentiles = np.array([mean_val] * 5)  # Fallback to mean value
                 
                 # Store results
@@ -217,7 +214,6 @@ class MonteCarloSimulator:
                     date = timestep_rows['date'].iloc[0]
                     dates_by_timestep[t] = date
                 else:
-                    st.warning(f"No data for timestep {t}. Using None for date.")
                     dates_by_timestep[t] = None
             
             # Replace timestep indices with dates

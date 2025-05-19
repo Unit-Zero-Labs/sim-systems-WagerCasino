@@ -47,22 +47,14 @@ def _parse_radcad_param(value):
             # Try to convert to float
             return float(clean_value)
         except ValueError:
-            # Attempt to parse as date
+            # If it's not a valid number, try other standard formats
             try:
-                # Try specific format first that might be common in sheets
-                dt_obj = datetime.strptime(value, '%d.%m.%Y')
-                return pd.Timestamp(dt_obj).tz_localize(None) # Ensure timezone naive
+                # Try to parse as date
+                return pd.to_datetime(value)
             except ValueError:
-                # Try more general parsing if specific format fails
-                # errors='coerce' will return NaT if parsing fails, which pd.isna() can catch later
-                dt_obj = pd.to_datetime(value, errors='coerce')
-                if pd.notna(dt_obj):
-                    return pd.Timestamp(dt_obj).tz_localize(None) # Ensure timezone naive
-                return value # Return as string if all parsing fails
-    elif isinstance(value, datetime): # Handle if it's already a Python datetime
-        return pd.Timestamp(value).tz_localize(None)
-    elif isinstance(value, pd.Timestamp): # Handle if it's already a Pandas Timestamp
-        return value.tz_localize(None) if value.tzinfo is not None else value
+                # If all parsing attempts fail, just return the string
+                return value
+    # Return the value as is if it's already the right type
     return value
 
 
@@ -143,6 +135,25 @@ BUCKET_NAME_MAPPING = {
     'Airdrop': 'Airdrops' # Assuming Airdrop Allocation becomes 'Airdrops' bucket
 }
 
+# Direct mapping from CSV parameter names to bucket names
+CSV_PARAM_TO_BUCKET = {
+    'team_allocation': 'Founders / Team',
+    'advisor_allocation': 'Advisors',
+    'strategic_partners_allocation': 'Strategic Partners',
+    'community_allocation': 'Community',
+    'foundation_allocation': 'CEX Liquidity',
+    'incentivisation_allocation': 'Incentivisation',
+    'staking_vesting_allocation': 'Staking Vesting',
+    'liquidity_pool_allocation': 'Liquidity Pool',
+    'airdrop_allocation': 'Airdrops',
+    'public_sale_1_allocation': 'Public Sale 1',
+    'public_sale_2_allocation': 'Public Sale 2',
+    'public_sale_3_allocation': 'Public Sale 3',
+    'seed_allocation': 'Public Sale 1',
+    'presale_1_allocation': 'Public Sale 2', 
+    'presale_2_allocation': 'Public Sale 3'
+}
+
 def generate_data_from_radcad_inputs(uploaded_file):
     data = TokenomicsData()
     try:
@@ -190,13 +201,39 @@ def generate_data_from_radcad_inputs(uploaded_file):
     vesting_series_data = {}
     stakeholder_details = []
 
+    st.info("Starting bucket allocation processing")
+    
+    # Look for direct allocation parameters from CSV
+    direct_allocations = {}
+    for param_key, bucket_name in CSV_PARAM_TO_BUCKET.items():
+        if param_key in radcad_params:
+            alloc_perc = radcad_params[param_key]
+            if alloc_perc is not None and alloc_perc > 0:
+                direct_allocations[bucket_name] = {
+                    'allocation': alloc_perc,
+                    'param_key': param_key
+                }
+                st.info(f"Found direct allocation: {param_key} = {alloc_perc} for bucket {bucket_name}")
+    
+    # Process buckets using both mappings
     for param_name_key, bucket_name_prefix in BUCKET_NAME_MAPPING.items():
+        # Skip if already processed via direct mapping
+        if bucket_name_prefix in direct_allocations:
+            continue
+            
+        # Debug logging
+        st.info(f"Processing bucket {bucket_name_prefix}, looking for allocation with param key {param_name_key}")
+        
         alloc_perc = radcad_params.get(f'{param_name_key} Token Allocation', radcad_params.get(f'{param_name_key}_allocation'))
         if alloc_perc is None and param_name_key == 'Airdrop': # Special handling for Airdrop
             alloc_perc = radcad_params.get('airdrop_allocation')
+            st.info(f"Found Airdrop allocation: {alloc_perc}")
         elif alloc_perc is None:
             # Attempt to find a generic key if specific one isn't present (e.g. Public Sale 1 instead of Public Sale 1 Token Allocation)
             alloc_perc = radcad_params.get(param_name_key)
+            
+        # Log the result of allocation lookup    
+        st.info(f"Allocation percentage for {bucket_name_prefix}: {alloc_perc}")
         
         if alloc_perc is not None and alloc_perc > 0:
             # Parameter names in radCAD_inputs.csv might vary slightly (e.g. spaces vs underscores)
@@ -208,6 +245,9 @@ def generate_data_from_radcad_inputs(uploaded_file):
             initial_vest_perc = next((radcad_params.get(k, 0) for k in initial_vest_perc_key_options if radcad_params.get(k) is not None), 0) / 100.0
             cliff_months = int(next((radcad_params.get(k, 0) for k in cliff_months_key_options if radcad_params.get(k) is not None), 0))
             vesting_duration_months = int(next((radcad_params.get(k, 0) for k in duration_months_key_options if radcad_params.get(k) is not None), 0))
+            
+            # Log vesting parameters
+            st.info(f"Vesting parameters for {bucket_name_prefix}: initial={initial_vest_perc*100}%, cliff={cliff_months} months, duration={vesting_duration_months} months")
             
             # Special handling for Airdrop dates if airdrop_date1, airdrop_amount1 etc. are used
             if bucket_name_prefix == 'Airdrops':
@@ -258,82 +298,56 @@ def generate_data_from_radcad_inputs(uploaded_file):
                     'vesting_duration_months': vesting_duration_months,
                     'is_airdrop': False
                 })
-
-    monthly_releases = np.zeros((len(stakeholder_details), len(data.dates)))
-
-    for i, stakeholder in enumerate(stakeholder_details):
-        total_stakeholder_tokens = stakeholder['total_tokens']
-        
-        if stakeholder['is_airdrop']:
-            for event in stakeholder['airdrop_events']:
-                event_date_ts = event['date'] # This is a pd.Timestamp, tz-naive
-                event_amount_perc = event['amount_perc'] # This is a float e.g. 0.5
-
-                if pd.isna(event_date_ts): # Explicitly check for NaT
-                    st.warning(f"Airdrop date for {stakeholder['name']} is invalid (NaT). Skipping this airdrop event.")
-                    continue
-
-                # Align event_date_ts to the start of its month to match data.dates index
-                try:
-                    # Convert to pd.Timestamp again to ensure it's the right type
-                    if not isinstance(event_date_ts, pd.Timestamp):
-                        event_date_ts = pd.Timestamp(event_date_ts)
-                    
-                    # Use start_time instead of floor('MS') for compatibility
-                    aligned_event_date = pd.Timestamp(year=event_date_ts.year, 
-                                                     month=event_date_ts.month, 
-                                                     day=1)
-                    
-                    st.info(f"Aligned airdrop date from {event_date_ts} to {aligned_event_date}")
-                except Exception as e:
-                    st.error(f"Error aligning airdrop date {event_date_ts} for {stakeholder['name']}: {e}. Skipping this event.")
-                    continue
-
-                try:
-                    if not (data.dates[0] <= aligned_event_date <= data.dates[-1]):
-                        st.warning(f"Airdrop date {event_date_ts.strftime('%Y-%m-%d')} for {stakeholder['name']} (aligns to {aligned_event_date.strftime('%Y-%m-%d')}) is outside the simulation period ({data.dates[0].strftime('%Y-%m-%d')} to {data.dates[-1].strftime('%Y-%m-%d')}). Skipping.")
-                        continue
-                    
-                    # Get the integer location of the aligned date in our DatetimeIndex
-                    event_month_index = data.dates.get_loc(aligned_event_date)
-                    monthly_releases[i, event_month_index] += total_stakeholder_tokens * event_amount_perc
-                except KeyError:
-                    # This should be rare if the date is within range and data.dates is a complete MS-frequency index
-                    st.warning(f"Airdrop date {event_date_ts.strftime('%Y-%m-%d')} for {stakeholder['name']} (aligns to {aligned_event_date.strftime('%Y-%m-%d')}) could not be precisely located in the simulation's date index. This may indicate an unexpected issue. Skipping this event.")
-                except Exception as e:
-                    st.error(f"An unexpected error occurred while processing airdrop for {stakeholder['name']} on {event_date_ts.strftime('%Y-%m-%d')}: {e}")
-        else:
-            initial_vest_tokens = total_stakeholder_tokens * stakeholder['initial_vest_perc']
-            cliff_months = stakeholder['cliff_months']
-            vesting_duration_months = stakeholder['vesting_duration_months']
-            
-            # TGE release (Month 0 if cliff is 0, or first month after launch)
-            if cliff_months == 0:
-                 monthly_releases[i, 0] += initial_vest_tokens
-                 remaining_tokens = total_stakeholder_tokens - initial_vest_tokens
-                 start_vesting_month_idx = 0 # Vesting starts from month 0 if no TGE or TGE is part of linear
-            else: # Cliff > 0
-                 if initial_vest_tokens > 0:
-                     monthly_releases[i, 0] += initial_vest_tokens # TGE happens at launch_date (month 0)
-                 remaining_tokens = total_stakeholder_tokens - initial_vest_tokens
-                 start_vesting_month_idx = cliff_months # Linear vesting starts after the cliff
-
-            if vesting_duration_months > 0 and remaining_tokens > 0:
-                tokens_per_month_linear = remaining_tokens / vesting_duration_months
-                for m_idx in range(vesting_duration_months):
-                    current_month_abs_idx = start_vesting_month_idx + m_idx
-                    if current_month_abs_idx < len(data.dates):
-                        monthly_releases[i, current_month_abs_idx] += tokens_per_month_linear
-            elif remaining_tokens > 0 and vesting_duration_months == 0 and cliff_months > 0 : # All remaining released after cliff if duration is 0
-                 if cliff_months < len(data.dates):
-                    monthly_releases[i, cliff_months] += remaining_tokens
-            elif remaining_tokens > 0 and vesting_duration_months == 0 and cliff_months == 0 and initial_vest_tokens < total_stakeholder_tokens:
-                 # If no cliff, no duration, but not fully vested at TGE -> release rest in month 0
-                 monthly_releases[i, 0] += remaining_tokens
     
+    # Now process direct allocations found earlier
+    for bucket_name, allocation_info in direct_allocations.items():
+        # Skip if already processed via traditional mapping
+        if any(s['name'] == bucket_name for s in stakeholder_details):
+            continue
+            
+        param_key = allocation_info['param_key']
+        alloc_perc = allocation_info['allocation']
+        
+        # Find corresponding vesting parameters
+        base_param = param_key.replace('_allocation', '')
+        
+        initial_vest_perc_key = f"{base_param}_initial_vesting"
+        cliff_months_key = f"{base_param}_cliff"
+        duration_months_key = f"{base_param}_vesting_duration"
+        
+        initial_vest_perc = radcad_params.get(initial_vest_perc_key, 0) / 100.0 if radcad_params.get(initial_vest_perc_key) is not None else 0
+        cliff_months = int(radcad_params.get(cliff_months_key, 0)) if radcad_params.get(cliff_months_key) is not None else 0
+        vesting_duration_months = int(radcad_params.get(duration_months_key, 0)) if radcad_params.get(duration_months_key) is not None else 0
+        
+        st.info(f"Direct allocation vesting parameters for {bucket_name}: initial={initial_vest_perc*100}%, cliff={cliff_months} months, duration={vesting_duration_months} months")
+        
+        # Add to stakeholder_details
+        stakeholder_details.append({
+            'name': bucket_name,
+            'total_tokens': initial_total_supply * alloc_perc,
+            'initial_vest_perc': initial_vest_perc,
+            'cliff_months': cliff_months,
+            'vesting_duration_months': vesting_duration_months,
+            'is_airdrop': bucket_name == 'Airdrops'
+        })
+
+    # Log the final stakeholder details 
+    st.info(f"Total stakeholders found: {len(stakeholder_details)}")
+    for i, stakeholder in enumerate(stakeholder_details):
+        st.info(f"Stakeholder {i+1}: {stakeholder['name']}, tokens: {stakeholder['total_tokens']:,.0f}")
+    
+    # Now process each stakeholder's vesting schedule - use our enhanced function instead
+    monthly_releases_df = _calculate_monthly_releases(stakeholder_details, data.dates)
+
     bucket_names = [s['name'] for s in stakeholder_details]
-    data.vesting_series = pd.DataFrame(monthly_releases, index=bucket_names, columns=data.dates)
-    data.vesting_cumulative = data.vesting_series.cumsum(axis=1)
+    data.vesting_series = monthly_releases_df.copy()
+    
+    # Calculate cumulative vesting
+    data.vesting_cumulative = pd.DataFrame(
+        np.cumsum(monthly_releases_df.values, axis=1),
+        index=monthly_releases_df.index,
+        columns=data.dates
+    )
 
     # 3. Adoption Metrics (Placeholder)
     data.adoption = pd.DataFrame(index=['Product Users', 'Token Holders'], columns=data.dates).fillna(0)
@@ -486,3 +500,71 @@ def generate_data_from_radcad_inputs(uploaded_file):
     data.static_params['Initial Total Supply of Tokens'] = initial_total_supply
     
     return data 
+
+def _calculate_monthly_releases(stakeholder_details, dates):
+    """
+    Calculate monthly token releases based on vesting schedules.
+    
+    Args:
+        stakeholder_details: List of dictionaries with stakeholder vesting details
+        dates: Array of dates for the time series
+        
+    Returns:
+        DataFrame with monthly token releases by stakeholder
+    """
+    monthly_releases = np.zeros((len(stakeholder_details), len(dates)))
+    
+    st.info(f"Calculating monthly releases for {len(stakeholder_details)} stakeholders across {len(dates)} months")
+    
+    for i, stakeholder in enumerate(stakeholder_details):
+        total_stakeholder_tokens = stakeholder['total_tokens']
+        
+        # Report what we're processing
+        st.info(f"Processing stakeholder {i+1}: {stakeholder['name']}, allocation: {total_stakeholder_tokens:,.0f} tokens")
+        
+        if stakeholder.get('is_airdrop', False):
+            # Handle airdrops (one-time events)
+            airdrop_events = stakeholder.get('airdrop_events', [])
+            for event in airdrop_events:
+                event_date = event['date']
+                event_amount_perc = event['amount_perc']
+                
+                # Find the closest date in our dates array
+                try:
+                    # Try to directly convert to pd.Timestamp
+                    if not isinstance(event_date, pd.Timestamp):
+                        event_date = pd.Timestamp(event_date)
+                    
+                    closest_date_idx = np.argmin([abs((date - event_date).days) for date in dates])
+                    airdrop_amount = total_stakeholder_tokens * event_amount_perc
+                    monthly_releases[i, closest_date_idx] += airdrop_amount
+                    
+                    st.info(f"Scheduled airdrop of {airdrop_amount:,.0f} tokens ({event_amount_perc*100:.1f}%) on {event_date}")
+                except Exception as e:
+                    st.error(f"Error scheduling airdrop: {e}")
+        else:
+            # Handle regular vesting
+            initial_vest_perc = stakeholder.get('initial_vest_perc', 0)
+            cliff_months = stakeholder.get('cliff_months', 0)
+            vesting_duration_months = stakeholder.get('vesting_duration_months', 36)  # Default to 36 months
+            
+            # Initial vesting (TGE)
+            if initial_vest_perc > 0:
+                initial_tokens = total_stakeholder_tokens * initial_vest_perc
+                monthly_releases[i, 0] += initial_tokens
+                st.info(f"Initial vesting (TGE): {initial_tokens:,.0f} tokens ({initial_vest_perc*100:.1f}%)")
+            
+            # Linear vesting after cliff
+            remaining_tokens = total_stakeholder_tokens * (1 - initial_vest_perc)
+            if vesting_duration_months > 0 and remaining_tokens > 0:
+                # Calculate monthly vesting amount
+                monthly_vest = remaining_tokens / vesting_duration_months
+                
+                # Apply vesting schedule
+                for m in range(cliff_months, cliff_months + vesting_duration_months):
+                    if m < len(dates):
+                        monthly_releases[i, m] += monthly_vest
+                
+                st.info(f"Linear vesting: {remaining_tokens:,.0f} tokens over {vesting_duration_months} months starting after {cliff_months} month cliff")
+    
+    return pd.DataFrame(monthly_releases, index=[s['name'] for s in stakeholder_details], columns=dates) 
