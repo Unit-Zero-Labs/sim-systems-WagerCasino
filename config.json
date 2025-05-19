@@ -1,0 +1,23 @@
+{
+    "simulation": {
+        "default_staking_share": 0.75,
+        "default_token_price": 0.03,
+        "default_staking_apr_multiplier": 1.0,
+        "default_market_volatility": 0.2
+    },
+    "monte_carlo": {
+        "default_num_runs": 50,
+        "default_show_confidence_intervals": true,
+        "default_show_percentiles": true,
+        "max_runs": 100
+    },
+    "ui": {
+        "default_theme": "dark",
+        "company_name": "Unit Zero Labs",
+        "product_name": "Tokenomics Engine"
+    },
+    "paths": {
+        "logo_path": "public/uz-logo.png",
+        "client_logo_path": "public/client-logo.png"
+    }
+}

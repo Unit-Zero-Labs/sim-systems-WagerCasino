@@ -36,12 +36,16 @@ def _parse_radcad_param(value):
         value = value.strip()
         if '%' in value:
             try:
+                # Remove commas and % for percentage values
                 return float(value.replace('%', '').replace(',', '')) / 100.0
             except ValueError:
                 # If percentage parsing fails, it might be a string with '%' not meant as percentage
                 pass # Fall through to other parsing attempts or return as string
         try:
-            return float(value.replace(',', ''))
+            # Remove commas from numeric values (like "888,000,000")
+            clean_value = value.replace(',', '')
+            # Try to convert to float
+            return float(clean_value)
         except ValueError:
             # Attempt to parse as date
             try:
@@ -68,13 +72,44 @@ def _get_radcad_params(df_radcad):
         st.error("radCAD input CSV must contain 'Parameter Name' and 'Initial Value' columns.")
         return None # Or raise an error
 
-    for _, row in df_radcad.iterrows():
+    # Debug: Print column names to ensure format is as expected
+    st.info(f"CSV columns: {df_radcad.columns.tolist()}")
+    
+    # Check for any 'initial_total_supply' parameters directly
+    param_names = df_radcad['Parameter Name'].tolist()
+    if 'initial_total_supply' in param_names:
+        row_idx = param_names.index('initial_total_supply')
+        raw_value = df_radcad.iloc[row_idx]['Initial Value']
+        st.info(f"Found initial_total_supply in row {row_idx}, raw value: {raw_value}")
+    
+    for idx, row in df_radcad.iterrows():
         param_key = row['Parameter Name']
         # Use .get to avoid KeyError if 'Initial Value' is missing for some reason, though it should be there.
         raw_value = row.get('Initial Value')
+        
+        # Special logging for important parameters
+        if param_key and (param_key == 'initial_total_supply' or param_key == 'Initial Total Supply of Tokens'):
+            st.info(f"Processing key parameter: {param_key}, raw value: {raw_value}, type: {type(raw_value)}")
+        
         param_value = _parse_radcad_param(raw_value)
+        
+        # Log after parsing for important parameters
+        if param_key and (param_key == 'initial_total_supply' or param_key == 'Initial Total Supply of Tokens'):
+            st.info(f"After parsing: {param_key} = {param_value}, type: {type(param_value)}")
+        
         if param_key and pd.notna(param_key):
             params[str(param_key).strip()] = param_value
+    
+    # Final check for important parameters
+    if 'initial_total_supply' in params:
+        st.info(f"Final initial_total_supply value: {params['initial_total_supply']}")
+    elif 'Initial Total Supply of Tokens' in params:
+        st.info(f"Found as 'Initial Total Supply of Tokens': {params['Initial Total Supply of Tokens']}")
+        # Also add it as initial_total_supply for consistent access
+        params['initial_total_supply'] = params['Initial Total Supply of Tokens']
+    else:
+        st.warning("initial_total_supply not found in any format")
+    
     return params
 
 ALLOCATION_PARAM_KEYWORDS = [
@@ -142,8 +177,14 @@ def generate_data_from_radcad_inputs(uploaded_file):
 
     # 2. Vesting Schedules
     initial_total_supply = radcad_params.get('initial_total_supply')
+    
+    # Diagnostic logging for initial_total_supply
+    st.info(f"Initial Total Supply parameter: {initial_total_supply}, Type: {type(initial_total_supply)}")
+    
     if initial_total_supply is None:
+        # Print all keys in radcad_params to help diagnose
         st.error("Initial Total Supply not found in radCAD inputs.")
+        st.info(f"Available parameters: {list(radcad_params.keys())}")
         return None
 
     vesting_series_data = {}
@@ -234,10 +275,18 @@ def generate_data_from_radcad_inputs(uploaded_file):
 
                 # Align event_date_ts to the start of its month to match data.dates index
                 try:
-                    # data.dates is already tz-naive and 'MS' frequency.
-                    aligned_event_date = event_date_ts.floor('MS')
+                    # Convert to pd.Timestamp again to ensure it's the right type
+                    if not isinstance(event_date_ts, pd.Timestamp):
+                        event_date_ts = pd.Timestamp(event_date_ts)
+                    
+                    # Use start_time instead of floor('MS') for compatibility
+                    aligned_event_date = pd.Timestamp(year=event_date_ts.year, 
+                                                     month=event_date_ts.month, 
+                                                     day=1)
+                    
+                    st.info(f"Aligned airdrop date from {event_date_ts} to {aligned_event_date}")
                 except Exception as e:
-                    st.error(f"Error aligning airdrop date {event_date_ts} for {stakeholder['name']} using .floor('MS'): {e}. Skipping this event.")
+                    st.error(f"Error aligning airdrop date {event_date_ts} for {stakeholder['name']}: {e}. Skipping this event.")
                     continue
 
                 try:
@@ -392,14 +441,25 @@ def generate_data_from_radcad_inputs(uploaded_file):
 
 
     # Liquidity Pool Valuation:
-    lp_initial_tokens_perc = radcad_params.get('Liquidity Pool Token Allocation') # This is total allocation %
+    lp_initial_tokens_perc = radcad_params.get('Liquidity Pool Token Allocation') 
+    
+    # If not found, try with the key format from the CSV (liquidity_pool_allocation)
+    if lp_initial_tokens_perc is None:
+        lp_initial_tokens_perc = radcad_params.get('liquidity_pool_allocation')
+        if lp_initial_tokens_perc is not None:
+            st.info(f"Found Liquidity Pool allocation as 'liquidity_pool_allocation': {lp_initial_tokens_perc}")
+    
     lp_valuation = 0
     
     if lp_initial_tokens_perc is not None and initial_total_supply is not None and initial_total_supply > 0:
         # Assume all LP tokens are available at TGE from its allocation for initial valuation
         lp_tokens_at_tge = initial_total_supply * lp_initial_tokens_perc
         lp_valuation = lp_tokens_at_tge * initial_token_price # Initial valuation
+        st.info(f"Calculated LP valuation: {lp_valuation} from {lp_initial_tokens_perc} of {initial_total_supply} at price {initial_token_price}")
     else:
+        if lp_initial_tokens_perc is None:
+            st.warning("Liquidity Pool token allocation not found in parameters. Available keys: " + 
+                      str([k for k in radcad_params.keys() if 'liquid' in k.lower() or 'pool' in k.lower()]))
         st.warning("Liquidity Pool token allocation or initial total supply missing. Initial LP valuation may be inaccurate.")
 
     data.liquidity_pool_valuation = lp_valuation # Store initial scalar value

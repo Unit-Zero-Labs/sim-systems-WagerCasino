@@ -159,6 +159,10 @@ def display_single_run_results(sim_result: pd.DataFrame) -> None:
     Args:
         sim_result: DataFrame with simulation results
     """
+    # Debug info
+    st.info(f"Simulation result columns: {sim_result.columns.tolist()}")
+    st.info(f"Initial values from simulation: token_supply={sim_result['token_supply'].iloc[0]:,.0f}, circulating_supply={sim_result['circulating_supply'].iloc[0]:,.0f}")
+    
     # Create tabs for different metrics
     metric_tabs = st.tabs(["Token Supply", "Token Price", "Market Cap", "Staking"])
     
@@ -172,9 +176,19 @@ def display_single_run_results(sim_result: pd.DataFrame) -> None:
         # Display the simulation results
         st.markdown('<div class="plot-container">', unsafe_allow_html=True)
         st.subheader("Supply Results")
-        st.write(f"Initial Supply: {sim_result['circulating_supply'].iloc[0]:,.0f} tokens")
-        st.write(f"Final Supply: {sim_result['circulating_supply'].iloc[-1]:,.0f} tokens")
-        st.write(f"Change: {(sim_result['circulating_supply'].iloc[-1] - sim_result['circulating_supply'].iloc[0]):,.0f} tokens ({(sim_result['circulating_supply'].iloc[-1] / sim_result['circulating_supply'].iloc[0] - 1) * 100:.2f}%)")
+        
+        # Make sure we display the token_supply from the simulation result
+        st.write(f"Initial Total Supply: {sim_result['token_supply'].iloc[0]:,.0f} tokens")
+        st.write(f"Initial Circulating Supply: {sim_result['circulating_supply'].iloc[0]:,.0f} tokens")
+        st.write(f"Final Circulating Supply: {sim_result['circulating_supply'].iloc[-1]:,.0f} tokens")
+        
+        # Calculate change only if initial is not zero
+        if sim_result['circulating_supply'].iloc[0] > 0:
+            change_pct = (sim_result['circulating_supply'].iloc[-1] / sim_result['circulating_supply'].iloc[0] - 1) * 100
+            st.write(f"Change: {(sim_result['circulating_supply'].iloc[-1] - sim_result['circulating_supply'].iloc[0]):,.0f} tokens ({change_pct:.2f}%)")
+        else:
+            st.write(f"Change: {(sim_result['circulating_supply'].iloc[-1] - sim_result['circulating_supply'].iloc[0]):,.0f} tokens (N/A%)")
+        
         st.markdown('</div>', unsafe_allow_html=True)
     
     with metric_tabs[1]:
@@ -240,6 +254,11 @@ def display_monte_carlo_results(
         show_confidence_intervals: Whether to show confidence intervals
         show_percentiles: Whether to show percentile bands
     """
+    # Check if mc_results is valid
+    if mc_results is None or not isinstance(mc_results, dict) or not mc_results:
+        st.error("Invalid or empty Monte Carlo results. Please try running the simulation again.")
+        return
+    
     # Create tabs for Monte Carlo visualization
     mc_tabs = st.tabs(["Time Series", "Distribution"])
     
@@ -249,59 +268,90 @@ def display_monte_carlo_results(
         
         with variable_tabs[0]:
             st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-            fig = plot_monte_carlo_results(
-                mc_results, 
-                "circulating_supply", 
-                show_confidence_intervals=show_confidence_intervals,
-                show_percentiles=show_percentiles
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            try:
+                fig = plot_monte_carlo_results(
+                    mc_results, 
+                    "circulating_supply", 
+                    show_confidence_intervals=show_confidence_intervals,
+                    show_percentiles=show_percentiles
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Error plotting circulating supply: {str(e)}")
             st.markdown('</div>', unsafe_allow_html=True)
         
         with variable_tabs[1]:
             st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-            fig = plot_monte_carlo_results(
-                mc_results, 
-                "token_price", 
-                show_confidence_intervals=show_confidence_intervals,
-                show_percentiles=show_percentiles
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            try:
+                fig = plot_monte_carlo_results(
+                    mc_results, 
+                    "token_price", 
+                    show_confidence_intervals=show_confidence_intervals,
+                    show_percentiles=show_percentiles
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Error plotting token price: {str(e)}")
             st.markdown('</div>', unsafe_allow_html=True)
         
         with variable_tabs[2]:
             st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-            fig = plot_monte_carlo_results(
-                mc_results, 
-                "market_cap", 
-                show_confidence_intervals=show_confidence_intervals,
-                show_percentiles=show_percentiles
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            try:
+                fig = plot_monte_carlo_results(
+                    mc_results, 
+                    "market_cap", 
+                    show_confidence_intervals=show_confidence_intervals,
+                    show_percentiles=show_percentiles
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Error plotting market cap: {str(e)}")
             st.markdown('</div>', unsafe_allow_html=True)
         
         with variable_tabs[3]:
             st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-            fig = plot_monte_carlo_results(
-                mc_results, 
-                "staked_tokens", 
-                show_confidence_intervals=show_confidence_intervals,
-                show_percentiles=show_percentiles
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            try:
+                fig = plot_monte_carlo_results(
+                    mc_results, 
+                    "staked_tokens", 
+                    show_confidence_intervals=show_confidence_intervals,
+                    show_percentiles=show_percentiles
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Error plotting staked tokens: {str(e)}")
             st.markdown('</div>', unsafe_allow_html=True)
     
     with mc_tabs[1]:
+        # Check if we have raw data for distribution analysis
+        if 'raw_data' not in mc_results or mc_results['raw_data'] is None or len(mc_results['raw_data']) == 0:
+            st.error("No raw data available for distribution analysis.")
+            return
+        
         # Distribution analysis
         variable_options = ["token_price", "market_cap", "circulating_supply", "staked_tokens"]
+        available_vars = [var for var in variable_options if var in mc_results['raw_data'].columns]
+        
+        if not available_vars:
+            st.error("No variables available for distribution analysis.")
+            return
+            
         selected_variable = st.selectbox(
             "Select Variable for Distribution Analysis",
-            options=variable_options,
+            options=available_vars,
             format_func=lambda x: x.replace('_', ' ').title()
         )
         
         # Get timesteps
-        timesteps = sorted(mc_results['raw_data']['timestep'].unique())
+        try:
+            timesteps = sorted(mc_results['raw_data']['timestep'].unique())
+        except Exception as e:
+            st.error(f"Error getting timesteps: {str(e)}")
+            return
+            
+        if not timesteps:
+            st.error("No timesteps available for analysis.")
+            return
         
         # Timestep slider
         selected_timestep = st.slider(
@@ -312,26 +362,36 @@ def display_monte_carlo_results(
         )
         
         # Get the date for the selected timestep
-        timestep_date = mc_results['raw_data'][mc_results['raw_data']['timestep'] == selected_timestep]['date'].iloc[0]
-        st.write(f"Selected Date: {timestep_date}")
+        try:
+            timestep_dates = mc_results['raw_data'][mc_results['raw_data']['timestep'] == selected_timestep]['date']
+            if len(timestep_dates) > 0:
+                timestep_date = timestep_dates.iloc[0]
+                st.write(f"Selected Date: {timestep_date}")
+            else:
+                st.warning("No date available for selected timestep.")
+        except Exception as e:
+            st.warning(f"Error getting date for timestep: {str(e)}")
         
         # Plot distribution
         st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-        hist_fig, stats = plot_distribution_at_timestep(mc_results, selected_variable, selected_timestep)
-        st.plotly_chart(hist_fig, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Display statistics
-        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-        st.subheader("Distribution Statistics")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Mean", f"{stats['mean']:.5f}")
-            st.metric("Standard Deviation", f"{stats['std_dev']:.5f}")
-        with col2:
-            st.metric("Median", f"{stats['median']:.5f}")
-            st.metric("Coefficient of Variation", f"{stats['cv']:.5f}")
-        with col3:
-            st.metric("5th Percentile", f"{stats['percentiles'][0]:.5f}")
-            st.metric("95th Percentile", f"{stats['percentiles'][4]:.5f}")
+        try:
+            hist_fig, stats = plot_distribution_at_timestep(mc_results, selected_variable, selected_timestep)
+            st.plotly_chart(hist_fig, use_container_width=True)
+            
+            # Display statistics
+            st.subheader("Distribution Statistics")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Mean", f"{stats['mean']:.5f}")
+                st.metric("Standard Deviation", f"{stats['std_dev']:.5f}")
+            with col2:
+                st.metric("Median", f"{stats['median']:.5f}")
+                st.metric("Coefficient of Variation", f"{stats['cv']:.5f}")
+            with col3:
+                if len(stats['percentiles']) >= 5:
+                    st.metric("5th Percentile", f"{stats['percentiles'][0]:.5f}")
+                    st.metric("95th Percentile", f"{stats['percentiles'][4]:.5f}")
+        except Exception as e:
+            st.error(f"Error creating distribution plot: {str(e)}")
+            
         st.markdown('</div>', unsafe_allow_html=True)

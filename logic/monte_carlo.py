@@ -140,6 +140,10 @@ class MonteCarloSimulator:
         Returns:
             Dictionary with processed Monte Carlo results
         """
+        if not raw_results:
+            st.error("No simulation results to process. Please check for errors in the simulation.")
+            return None
+            
         # Combine all raw results
         raw_data = pd.concat(raw_results, ignore_index=True)
         
@@ -161,6 +165,11 @@ class MonteCarloSimulator:
         
         # For each state variable
         for var in state_vars:
+            # Make sure the variable exists in the raw data
+            if var not in raw_data.columns:
+                st.warning(f"Variable '{var}' not found in simulation results. Skipping.")
+                continue
+                
             # Initialize DataFrames for statistics
             processed_results['mean'][var] = pd.DataFrame(index=timesteps)
             processed_results['std_dev'][var] = pd.DataFrame(index=timesteps)
@@ -172,6 +181,11 @@ class MonteCarloSimulator:
                 # Get data for this timestep across all runs
                 timestep_data = raw_data[(raw_data['timestep'] == t)][var]
                 
+                if len(timestep_data) == 0:
+                    # Skip if no data for this timestep
+                    st.warning(f"No data for timestep {t} and variable {var}. Skipping.")
+                    continue
+                
                 # Calculate mean and standard deviation
                 mean_val = timestep_data.mean()
                 std_val = timestep_data.std()
@@ -180,7 +194,11 @@ class MonteCarloSimulator:
                 conf_interval = 1.96 * std_val / np.sqrt(len(raw_results))  # 95% CI
                 
                 # Calculate percentiles
-                percentiles = timestep_data.quantile([0.05, 0.25, 0.5, 0.75, 0.95]).values
+                try:
+                    percentiles = timestep_data.quantile([0.05, 0.25, 0.5, 0.75, 0.95]).values
+                except Exception as e:
+                    st.warning(f"Error calculating percentiles for timestep {t}, variable {var}: {e}")
+                    percentiles = np.array([mean_val] * 5)  # Fallback to mean value
                 
                 # Store results
                 processed_results['mean'][var].loc[t] = mean_val
@@ -192,17 +210,30 @@ class MonteCarloSimulator:
         if 'date' in raw_data.columns:
             dates_by_timestep = {}
             for t in timesteps:
-                # Get the date for this timestep (same across all runs)
-                date = raw_data[raw_data['timestep'] == t]['date'].iloc[0]
-                dates_by_timestep[t] = date
+                # Make sure there's data for this timestep
+                timestep_rows = raw_data[raw_data['timestep'] == t]
+                if len(timestep_rows) > 0:
+                    # Get the date for this timestep (same across all runs)
+                    date = timestep_rows['date'].iloc[0]
+                    dates_by_timestep[t] = date
+                else:
+                    st.warning(f"No data for timestep {t}. Using None for date.")
+                    dates_by_timestep[t] = None
             
             # Replace timestep indices with dates
             for var in state_vars:
-                date_index = [dates_by_timestep[t] for t in timesteps]
-                processed_results['mean'][var].index = date_index
-                processed_results['std_dev'][var].index = date_index
-                processed_results['conf_intervals'][var].index = date_index
-                processed_results['percentiles'][var].index = date_index
+                if var in processed_results['mean']:  # Only process variables that were found in the data
+                    date_index = [dates_by_timestep[t] for t in timesteps if t in dates_by_timestep]
+                    if len(date_index) > 0:
+                        valid_timestamps = [t for t in timesteps if t in dates_by_timestep]
+                        processed_results['mean'][var] = processed_results['mean'][var].loc[valid_timestamps]
+                        processed_results['mean'][var].index = date_index
+                        processed_results['std_dev'][var] = processed_results['std_dev'][var].loc[valid_timestamps]
+                        processed_results['std_dev'][var].index = date_index
+                        processed_results['conf_intervals'][var] = processed_results['conf_intervals'][var].loc[valid_timestamps]
+                        processed_results['conf_intervals'][var].index = date_index
+                        processed_results['percentiles'][var] = processed_results['percentiles'][var].loc[valid_timestamps]
+                        processed_results['percentiles'][var].index = date_index
         
         return processed_results
     
