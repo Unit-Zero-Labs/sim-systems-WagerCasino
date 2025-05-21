@@ -56,8 +56,8 @@ def main():
     )
     
     # Create tabs
-    tab_load_data, tab_data_tables, tab_simulation, tab_scenario_analysis = st.tabs([
-        "Load Data", "Data Tables", "Simulation", "Scenario Analysis"
+    tab_load_data, tab_data_tables, tab_simulation = st.tabs([
+        "Load Data", "Data Tables", "Simulation"
     ])
     
     with tab_load_data:
@@ -136,7 +136,7 @@ def main():
                 StateManager.set_simulation_type("stochastic")
                 
                 # Run button
-                if st.button("Run Stochastic Simulation"):
+                if st.button("Run Simulation"):
                     # Get parameters from session state
                     params = StateManager.get_simulation_params()
                     enable_monte_carlo = StateManager.get_monte_carlo_enabled()
@@ -234,15 +234,6 @@ def main():
         else:
             st.info("Please upload and process a radCAD Inputs CSV in the 'Load Data' tab to run simulations.")
     
-    with tab_scenario_analysis:
-        st.header("Scenario Analysis")
-        data_for_scenario = StateManager.get_data()
-        
-        if data_for_scenario is not None:
-            st.write("Scenario analysis will be available in a future update.")
-            st.info("This feature allows you to define and compare multiple scenarios based on the uploaded radCAD inputs.")
-        else:
-            st.info("Please upload and process a radCAD Inputs CSV in the 'Load Data' tab for scenario analysis.")
 
 
 if __name__ == "__main__":

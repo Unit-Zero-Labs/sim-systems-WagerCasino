@@ -358,7 +358,7 @@ def generate_data_from_radcad_inputs(uploaded_file):
     if final_pu is None: final_pu = initial_pu
 
     if len(data.dates) > 0:
-        data.adoption.loc['Product Users'] = np.linspace(initial_pu, final_pu, len(data.dates))
+        data.adoption.loc['Product Users'] = np.linspace(initial_pu, final_pu, len(data.dates)).astype(int)
     # Example: simple linear growth for Token Holders
     initial_th = radcad_params.get('initial_token_holders', 0)
     final_th = radcad_params.get('token_holders_after_10y', initial_th if initial_th is not None else 0) # Ensure final_th has a fallback
@@ -366,7 +366,7 @@ def generate_data_from_radcad_inputs(uploaded_file):
     if final_th is None: final_th = initial_th
 
     if len(data.dates) > 0:
-        data.adoption.loc['Token Holders'] = np.linspace(initial_th, final_th, len(data.dates))
+        data.adoption.loc['Token Holders'] = np.linspace(initial_th, final_th, len(data.dates)).astype(int)
 
 
     # 4. Staking APR (Placeholder)
@@ -435,7 +435,7 @@ def generate_data_from_radcad_inputs(uploaded_file):
     if not data.vesting_cumulative.empty:
         circulating_supply_df = data.vesting_cumulative.drop('Liquidity Pool', axis=0, errors='ignore').sum(axis=0)
         # Ensure consistent indexing for multiplication
-        token_prices_for_calc = data.token_price_series.loc['Token Price'].reindex(circulating_supply_df.index).fillna(method='ffill').fillna(method='bfill')
+        token_prices_for_calc = data.token_price_series.loc['Token Price'].reindex(circulating_supply_df.index).ffill().bfill()
         market_cap_values = circulating_supply_df.values * token_prices_for_calc.values
         data.market_cap_series = pd.DataFrame(market_cap_values, index=data.dates, columns=['Market Cap']).T
         data.market_cap_series.columns = data.dates
@@ -445,7 +445,7 @@ def generate_data_from_radcad_inputs(uploaded_file):
 
     # FDV MC:
     if initial_total_supply is not None and initial_total_supply > 0:
-        token_prices_for_fdv = data.token_price_series.loc['Token Price'].reindex(data.dates).fillna(method='ffill').fillna(method='bfill')
+        token_prices_for_fdv = data.token_price_series.loc['Token Price'].reindex(data.dates).ffill().bfill()
         fdv_mc_values = initial_total_supply * token_prices_for_fdv.values
         data.fdv_mc_series = pd.DataFrame(fdv_mc_values, index=data.dates, columns=['FDV MC']).T
         data.fdv_mc_series.columns = data.dates
