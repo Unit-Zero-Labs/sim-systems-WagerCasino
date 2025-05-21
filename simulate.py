@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import random
+import gc
 from typing import Dict, List, Any, Tuple, Union
 from radcad import Model, Simulation, Experiment
 from radcad.engine import Engine, Backend
@@ -133,8 +134,8 @@ class TokenomicsSimulation:
         Returns:
             Dictionary with staking delta
         """
-        # Get staking share parameter
-        staking_share = params["staking_share"]
+        # Get staking share parameter - use a default for agent-based simulations if not present
+        staking_share = params.get("staking_share", 0.5)  # Default to 50% if not specified
         
         # Get current circulating supply and staked tokens
         circulating_supply = prev_state["circulating_supply"]
@@ -303,7 +304,7 @@ class TokenomicsSimulation:
             If num_runs>1: Dictionary with raw data and statistical measures (mean, std_dev, conf_intervals, percentiles)
         """
         if simulation_type == "agent":
-            return self.run_agent_simulation(params)
+            return self.run_agent_simulation(params, num_runs)
         else:
             return self.run_stochastic_simulation(params, num_runs)
     
@@ -319,158 +320,321 @@ class TokenomicsSimulation:
             If num_runs=1: DataFrame with simulation results
             If num_runs>1: Dictionary with raw data and statistical measures (mean, std_dev, conf_intervals, percentiles)
         """
-        # Set up initial state
-        initial_state = self.setup_initial_state(params)
-        
-        # Define state update blocks
-        state_update_blocks = [
-            {
-                'policies': {
-                    'vesting': self.p_vesting_schedule,
-                    'staking': self.p_staking,
-                    'price': self.p_token_price
-                },
-                'variables': {
-                    'circulating_supply': self.s_update_supply,
-                    'staked_tokens': self.s_update_staking,
-                    'effective_circulating_supply': self.s_update_effective_supply,
-                    'token_price': self.s_update_price,
-                    'market_cap': self.s_update_market_cap,
-                    'time_step': self.s_update_time
+        try:
+            # Set up initial state
+            initial_state = self.setup_initial_state(params)
+            
+            # Define state update blocks
+            state_update_blocks = [
+                {
+                    'policies': {
+                        'vesting': self.p_vesting_schedule,
+                        'staking': self.p_staking,
+                        'price': self.p_token_price
+                    },
+                    'variables': {
+                        'circulating_supply': self.s_update_supply,
+                        'staked_tokens': self.s_update_staking,
+                        'effective_circulating_supply': self.s_update_effective_supply,
+                        'token_price': self.s_update_price,
+                        'market_cap': self.s_update_market_cap,
+                        'time_step': self.s_update_time
+                    }
                 }
-            }
-        ]
-        
-        # Create model
-        model = Model(
-            initial_state=initial_state,
-            state_update_blocks=state_update_blocks,
-            params=params
-        )
-        
-        # Create simulation
-        simulation = Simulation(
-            model=model,
-            timesteps=self.timesteps,
-            runs=num_runs  # Use the num_runs parameter for Monte Carlo simulation
-        )
-        
-        # Create experiment
-        experiment = Experiment(simulation)
-        
-        # Run experiment
-        result = experiment.run()
-        
-        # Process results based on number of runs
-        if num_runs > 1:
-            # Convert to DataFrame
-            result_df = pd.DataFrame(result)
+            ]
             
-            # Add dates
-            result_df['date'] = [self.data.dates[i] if i < len(self.data.dates) else None for i in result_df['timestep']]
+            # Limit number of runs to prevent memory issues
+            safe_num_runs = min(num_runs, 100)  # Cap at 100 runs to avoid memory issues
+            if safe_num_runs < num_runs:
+                st.warning(f"Number of runs limited to {safe_num_runs} to prevent memory issues")
             
-            # Create a dictionary to store the processed results
-            processed_results = {
-                'raw_data': result_df,
-                'mean': {},
-                'std_dev': {},
-                'conf_intervals': {},
-                'percentiles': {}
-            }
+            # Create model
+            model = Model(
+                initial_state=initial_state,
+                state_update_blocks=state_update_blocks,
+                params=params
+            )
             
-            # Get unique timesteps
-            timesteps = sorted(result_df['timestep'].unique())
+            # Create simulation
+            simulation = Simulation(
+                model=model,
+                timesteps=self.timesteps,
+                runs=safe_num_runs
+            )
             
-            # State variables to analyze
-            state_vars = ['token_supply', 'circulating_supply', 'staked_tokens', 
-                          'effective_circulating_supply', 'token_price', 'market_cap', 'staking_apr']
+            # Create experiment
+            experiment = Experiment(simulation)
             
-            # For each state variable
-            for var in state_vars:
-                # Skip if variable not in results
-                if var not in result_df.columns:
-                    continue
-                    
-                # Initialize DataFrames for statistics
-                processed_results['mean'][var] = pd.DataFrame(index=timesteps)
-                processed_results['std_dev'][var] = pd.DataFrame(index=timesteps)
-                processed_results['conf_intervals'][var] = pd.DataFrame(index=timesteps, columns=['lower', 'upper'])
-                processed_results['percentiles'][var] = pd.DataFrame(index=timesteps, columns=[5, 25, 50, 75, 95])
+            # Run experiment
+            result = experiment.run()
+            
+            # Process results based on number of runs
+            if safe_num_runs > 1:
+                # Convert to DataFrame
+                result_df = pd.DataFrame(result)
                 
-                # Calculate statistics for each timestep
-                for t in timesteps:
-                    # Get data for this timestep across all runs
-                    timestep_data = result_df[(result_df['timestep'] == t)][var]
+                # Add dates
+                result_df['date'] = [self.data.dates[i] if i < len(self.data.dates) else None for i in result_df['timestep']]
+                
+                # Create a dictionary to store the processed results
+                processed_results = {
+                    'raw_data': result_df,
+                    'mean': {},
+                    'std_dev': {},
+                    'conf_intervals': {},
+                    'percentiles': {}
+                }
+                
+                # Get unique timesteps
+                timesteps = sorted(result_df['timestep'].unique())
+                
+                # State variables to analyze
+                state_vars = ['token_supply', 'circulating_supply', 'staked_tokens', 
+                            'effective_circulating_supply', 'token_price', 'market_cap', 'staking_apr']
+                
+                # For each state variable
+                for var in state_vars:
+                    # Skip if variable not in results
+                    if var not in result_df.columns:
+                        continue
+                        
+                    # Initialize DataFrames for statistics
+                    processed_results['mean'][var] = pd.DataFrame(index=timesteps)
+                    processed_results['std_dev'][var] = pd.DataFrame(index=timesteps)
+                    processed_results['conf_intervals'][var] = pd.DataFrame(index=timesteps, columns=['lower', 'upper'])
+                    processed_results['percentiles'][var] = pd.DataFrame(index=timesteps, columns=[5, 25, 50, 75, 95])
                     
-                    # Calculate mean and standard deviation
-                    mean_val = timestep_data.mean()
-                    std_val = timestep_data.std()
-                    
-                    # Calculate 95% confidence interval
-                    conf_interval = 1.96 * std_val / np.sqrt(num_runs)  # 95% CI
-                    
-                    # Calculate percentiles
-                    percentiles = timestep_data.quantile([0.05, 0.25, 0.5, 0.75, 0.95]).values
-                    
-                    # Store results
-                    processed_results['mean'][var].loc[t] = mean_val
-                    processed_results['std_dev'][var].loc[t] = std_val
-                    processed_results['conf_intervals'][var].loc[t] = [mean_val - conf_interval, mean_val + conf_interval]
-                    processed_results['percentiles'][var].loc[t] = percentiles
-            
-            # Add dates to the statistical results
-            for var in state_vars:
-                if var in processed_results['mean']:  # Only process variables that were found in the data
-                    date_index = [self.data.dates[i] if i < len(self.data.dates) else None for i in timesteps]
-                    processed_results['mean'][var].index = date_index
-                    processed_results['std_dev'][var].index = date_index
-                    processed_results['conf_intervals'][var].index = date_index
-                    processed_results['percentiles'][var].index = date_index
-            
-            return processed_results
-        else:
-            # Original single-run processing
-            result_df = pd.DataFrame(result)
-            
-            # Add dates
-            result_df['date'] = [self.data.dates[i] if i < len(self.data.dates) else None for i in result_df['timestep']]
-            
-            return result_df
+                    # Calculate statistics for each timestep
+                    for t in timesteps:
+                        # Get data for this timestep across all runs
+                        timestep_data = result_df[(result_df['timestep'] == t)][var]
+                        
+                        if len(timestep_data) == 0:
+                            # Skip if no data for this timestep
+                            continue
+                        
+                        # Calculate mean and standard deviation
+                        mean_val = timestep_data.mean()
+                        std_val = timestep_data.std()
+                        
+                        # Calculate 95% confidence interval
+                        n_runs = len(timestep_data)
+                        conf_interval = 1.96 * std_val / np.sqrt(n_runs) if n_runs > 1 else std_val
+                        
+                        # Calculate percentiles
+                        try:
+                            percentiles = timestep_data.quantile([0.05, 0.25, 0.5, 0.75, 0.95]).values
+                        except Exception as e:
+                            # Fallback to mean value if percentile calculation fails
+                            percentiles = np.array([mean_val] * 5)
+                        
+                        # Store results
+                        processed_results['mean'][var].loc[t] = mean_val
+                        processed_results['std_dev'][var].loc[t] = std_val
+                        processed_results['conf_intervals'][var].loc[t] = [mean_val - conf_interval, mean_val + conf_interval]
+                        processed_results['percentiles'][var].loc[t] = percentiles
+                
+                # Add dates to the statistical results
+                for var in state_vars:
+                    if var in processed_results['mean']:  # Only process variables that were found in the data
+                        date_index = [self.data.dates[i] if i < len(self.data.dates) else None for i in timesteps]
+                        processed_results['mean'][var].index = date_index
+                        processed_results['std_dev'][var].index = date_index
+                        processed_results['conf_intervals'][var].index = date_index
+                        processed_results['percentiles'][var].index = date_index
+                
+                # Force garbage collection to free memory
+                gc.collect()
+                
+                return processed_results
+            else:
+                # Original single-run processing
+                result_df = pd.DataFrame(result)
+                
+                # Add dates
+                result_df['date'] = [self.data.dates[i] if i < len(self.data.dates) else None for i in result_df['timestep']]
+                
+                return result_df
+        except Exception as e:
+            ErrorHandler.log_error(e, "stochastic_simulation")
+            st.error(f"Error in stochastic simulation: {str(e)}")
+            raise
     
-    def run_agent_simulation(self, params: Dict[str, Any]) -> pd.DataFrame:
+    def run_agent_simulation(self, params: Dict[str, Any], num_runs: int = 1) -> Union[pd.DataFrame, Dict[str, Any]]:
         """
         Run an agent-based simulation with the given parameters.
         
         Args:
             params: Dictionary of simulation parameters
+            num_runs: Number of Monte Carlo runs (default: 1)
             
         Returns:
-            DataFrame with simulation results
+            If num_runs=1: DataFrame with simulation results
+            If num_runs>1: Dictionary with raw data and statistical measures (mean, std_dev, conf_intervals, percentiles)
         """
-        # Set up initial state
-        initial_state = self.setup_initial_state(params)
-        
-        # Create agent based model
-        abm = AgentBasedModel(initial_state, params)
-        
-        # Create agents
-        agent_counts = {
-            "random_trader": params.get("random_trader_count", 20),
-            "trend_follower": params.get("trend_follower_count", 15),
-            "staking_agent": params.get("staking_agent_count", 10)
-        }
-        abm.create_agents(agent_counts)
-        
-        # Run simulation
-        result_df = abm.run_simulation(self.timesteps)
-        
-        # Add agent data at the end
-        agent_data = abm.get_agent_data()
-        
-        # Store agent data as an auxiliary result
-        self.agent_data = agent_data
-        
-        return result_df
+        try:
+            # Limit number of runs to prevent memory issues
+            safe_num_runs = min(num_runs, 100)  # Cap at 100 runs to avoid memory issues
+            if safe_num_runs < num_runs:
+                st.warning(f"Number of runs limited to {safe_num_runs} to prevent memory issues")
+                
+            # Single run case for direct agent data access
+            if safe_num_runs == 1:
+                # Set up initial state
+                initial_state = self.setup_initial_state(params)
+                
+                # Create agent based model
+                abm = AgentBasedModel(initial_state, params)
+                
+                # Create agents
+                agent_counts = {
+                    "random_trader": params.get("random_trader_count", 20),
+                    "trend_follower": params.get("trend_follower_count", 15),
+                    "staking_agent": params.get("staking_agent_count", 10)
+                }
+                abm.create_agents(agent_counts)
+                
+                # Run simulation
+                result_df = abm.run_simulation(self.timesteps)
+                
+                # Add agent data at the end
+                agent_data = abm.get_agent_data()
+                
+                # Store agent data as an auxiliary result
+                self.agent_data = agent_data
+                
+                return result_df
+            
+            # Multiple runs case for Monte Carlo simulation
+            else:
+                # Initialize list to store all runs
+                all_runs = []
+                
+                # Generate unique seeds for reproducibility
+                seeds = [np.random.randint(0, 100000) for _ in range(safe_num_runs)]
+                
+                # Define a reasonable batch size to avoid memory issues
+                batch_size = 20
+                
+                # Run in batches
+                for batch_start in range(0, safe_num_runs, batch_size):
+                    batch_end = min(batch_start + batch_size, safe_num_runs)
+                    batch_seeds = seeds[batch_start:batch_end]
+                    
+                    # Run each simulation in this batch with a different seed
+                    for run_idx, seed in enumerate(batch_seeds, start=batch_start):
+                        # Set seed for reproducibility
+                        np.random.seed(seed)
+                        random.seed(seed)
+                        
+                        # Set up initial state
+                        initial_state = self.setup_initial_state(params)
+                        
+                        # Create agent based model
+                        abm = AgentBasedModel(initial_state, params)
+                        
+                        # Create agents
+                        agent_counts = {
+                            "random_trader": params.get("random_trader_count", 20),
+                            "trend_follower": params.get("trend_follower_count", 15),
+                            "staking_agent": params.get("staking_agent_count", 10)
+                        }
+                        abm.create_agents(agent_counts)
+                        
+                        # Run simulation
+                        result_df = abm.run_simulation(self.timesteps)
+                        
+                        # Add run information
+                        result_df['run'] = run_idx
+                        result_df['seed'] = seed
+                        
+                        # Store this run
+                        all_runs.append(result_df)
+                        
+                        # If it's the last run, store agent data for visualization
+                        if run_idx == safe_num_runs - 1:
+                            self.agent_data = abm.get_agent_data()
+                    
+                    # Force garbage collection after each batch
+                    gc.collect()
+                
+                # Combine all runs
+                combined_df = pd.concat(all_runs, ignore_index=True)
+                
+                # Create a dictionary to store the processed results
+                processed_results = {
+                    'raw_data': combined_df,
+                    'mean': {},
+                    'std_dev': {},
+                    'conf_intervals': {},
+                    'percentiles': {}
+                }
+                
+                # Get unique timesteps
+                timesteps = sorted(combined_df['timestep'].unique())
+                
+                # State variables to analyze
+                state_vars = ['token_price', 'total_tokens', 'staked_tokens', 'market_cap', 'staking_apr', 'total_portfolio_value']
+                
+                # For each state variable
+                for var in state_vars:
+                    # Skip if variable not in results
+                    if var not in combined_df.columns:
+                        continue
+                        
+                    # Initialize DataFrames for statistics
+                    processed_results['mean'][var] = pd.DataFrame(index=timesteps)
+                    processed_results['std_dev'][var] = pd.DataFrame(index=timesteps)
+                    processed_results['conf_intervals'][var] = pd.DataFrame(index=timesteps, columns=['lower', 'upper'])
+                    processed_results['percentiles'][var] = pd.DataFrame(index=timesteps, columns=[5, 25, 50, 75, 95])
+                    
+                    # Calculate statistics for each timestep
+                    for t in timesteps:
+                        # Get data for this timestep across all runs
+                        timestep_data = combined_df[(combined_df['timestep'] == t)][var]
+                        
+                        if len(timestep_data) == 0:
+                            # Skip if no data for this timestep
+                            continue
+                        
+                        # Calculate mean and standard deviation
+                        mean_val = timestep_data.mean()
+                        std_val = timestep_data.std()
+                        
+                        # Calculate 95% confidence interval
+                        n_runs = len(timestep_data)
+                        conf_interval = 1.96 * std_val / np.sqrt(n_runs) if n_runs > 1 else std_val
+                        
+                        # Calculate percentiles
+                        try:
+                            percentiles = timestep_data.quantile([0.05, 0.25, 0.5, 0.75, 0.95]).values
+                        except Exception as e:
+                            # Fallback to mean value if percentile calculation fails
+                            percentiles = np.array([mean_val] * 5)
+                        
+                        # Store results
+                        processed_results['mean'][var].loc[t] = mean_val
+                        processed_results['std_dev'][var].loc[t] = std_val
+                        processed_results['conf_intervals'][var].loc[t] = [mean_val - conf_interval, mean_val + conf_interval]
+                        processed_results['percentiles'][var].loc[t] = percentiles
+                
+                # Add dates to the statistical results
+                for var in state_vars:
+                    if var in processed_results['mean']:  # Only process variables that were found in the data
+                        date_index = [self.data.dates[i] if i < len(self.data.dates) else None for i in timesteps]
+                        processed_results['mean'][var].index = date_index
+                        processed_results['std_dev'][var].index = date_index
+                        processed_results['conf_intervals'][var].index = date_index
+                        processed_results['percentiles'][var].index = date_index
+                
+                # Force garbage collection to free memory
+                gc.collect()
+                
+                return processed_results
+        except Exception as e:
+            ErrorHandler.log_error(e, "agent_simulation")
+            st.error(f"Error in agent-based simulation: {str(e)}")
+            raise
     
     def run_scenario_comparison(self, scenarios: List[Dict[str, Any]], num_runs: int = 1,
                               simulation_type: str = "stochastic") -> Dict[str, Any]:

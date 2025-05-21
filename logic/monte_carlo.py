@@ -11,6 +11,8 @@ import concurrent.futures
 import streamlit as st
 from datetime import datetime
 import multiprocessing
+import math
+import gc
 
 from utils.error_handler import ErrorHandler
 
@@ -29,8 +31,11 @@ class MonteCarloSimulator:
             simulation_engine: A TokenomicsSimulation instance
         """
         self.simulation_engine = simulation_engine
-        self.max_workers = min(multiprocessing.cpu_count(), 4)  # Use at most 4 cores
+        # Limit workers based on available CPU cores but cap at 4
+        self.max_workers = min(multiprocessing.cpu_count(), 4)  
         self.results = None  # Store the most recent simulation results
+        # Maximum runs per batch to avoid memory issues
+        self.max_batch_size = 20
     
     def run_simulations(
         self, 
@@ -124,43 +129,64 @@ class MonteCarloSimulator:
         """
         start_time = time.time()
         
-        # Create a list of simulation settings with different random seeds
-        simulation_settings = [
-            {"params": params, "run_num": i, "seed": np.random.randint(0, 10000)}
-            for i in range(num_runs)
-        ]
-        
-        # Create empty results object
+        # Create empty results list
         raw_results = []
         processed_results = None
         
+        # Create batch processing for larger run counts
+        batch_size = min(self.max_batch_size, num_runs)
+        num_batches = math.ceil(num_runs / batch_size)
+        
+        # Keep track of completion
+        completed = 0
+        
         try:
-            # Use a ThreadPoolExecutor instead of ProcessPoolExecutor to avoid pickle errors
-            # Threads share memory space, so no pickling is needed
-            with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                # Submit all simulation runs
-                future_to_run = {
-                    executor.submit(self._run_single_simulation, setting): i 
-                    for i, setting in enumerate(simulation_settings)
-                }
+            # Process each batch
+            for batch_idx in range(num_batches):
+                # Calculate start and end indices for this batch
+                start_idx = batch_idx * batch_size
+                end_idx = min(start_idx + batch_size, num_runs)
+                batch_runs = end_idx - start_idx
                 
-                # Process results as they complete
-                completed = 0
-                for future in concurrent.futures.as_completed(future_to_run):
-                    run_idx = future_to_run[future]
-                    try:
-                        result = future.result()
-                        raw_results.append(result)
-                    except Exception as e:
-                        ErrorHandler.log_error(e, f"Monte Carlo run {run_idx}")
+                # Create a list of simulation settings for this batch with different random seeds
+                simulation_settings = [
+                    {"params": params, "run_num": i + start_idx, "seed": np.random.randint(0, 100000)}
+                    for i in range(batch_runs)
+                ]
+                
+                # Use a ThreadPoolExecutor for parallelization
+                # ThreadPoolExecutor shares memory space, so it should be more efficient
+                with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                    # Submit all simulation runs for this batch
+                    future_to_run = {
+                        executor.submit(self._run_single_simulation, setting): i 
+                        for i, setting in enumerate(simulation_settings)
+                    }
                     
-                    # Update progress
-                    completed += 1
-                    if progress_callback:
-                        progress_callback(completed / num_runs)
+                    # Process results as they complete
+                    for future in concurrent.futures.as_completed(future_to_run):
+                        run_idx = future_to_run[future]
+                        try:
+                            result = future.result()
+                            if result is not None:
+                                raw_results.append(result)
+                        except Exception as e:
+                            ErrorHandler.log_error(e, f"Monte Carlo run {run_idx + start_idx}")
+                        
+                        # Update progress
+                        completed += 1
+                        if progress_callback:
+                            progress_callback(completed / num_runs)
+                
+                # Force garbage collection after each batch
+                executor.shutdown(wait=True)
+                gc.collect()
             
             # Process the raw results
-            processed_results = self._process_simulation_results(raw_results)
+            if raw_results:
+                processed_results = self._process_simulation_results(raw_results)
+            else:
+                raise ValueError("No successful simulation runs were completed")
             
         except Exception as e:
             ErrorHandler.log_error(e, "Monte Carlo simulation")
@@ -171,15 +197,15 @@ class MonteCarloSimulator:
         
         if processed_results:
             processed_results['execution_info'] = {
-                'num_runs': num_runs,
+                'num_runs': len(raw_results),  # Use actual completed runs
                 'execution_time': execution_time,
-                'runs_per_second': num_runs / execution_time,
+                'runs_per_second': len(raw_results) / execution_time if execution_time > 0 else 0,
                 'parallel_workers': self.max_workers
             }
         
         return processed_results
     
-    def _run_single_simulation(self, settings: Dict[str, Any]) -> pd.DataFrame:
+    def _run_single_simulation(self, settings: Dict[str, Any]) -> Optional[pd.DataFrame]:
         """
         Run a single simulation with the given settings.
         
@@ -187,23 +213,27 @@ class MonteCarloSimulator:
             settings: Dictionary containing simulation parameters and run info
             
         Returns:
-            DataFrame with simulation results
+            DataFrame with simulation results or None if an error occurred
         """
         params = settings["params"]
         run_num = settings["run_num"]
         seed = settings["seed"]
         
-        # Set random seed for this run
-        np.random.seed(seed)
-        
-        # Run the simulation
-        result = self.simulation_engine.run_simulation(params, num_runs=1)
-        
-        # Add run information to the result
-        result['run'] = run_num
-        result['seed'] = seed
-        
-        return result
+        try:
+            # Set random seed for this run
+            np.random.seed(seed)
+            
+            # Run the simulation
+            result = self.simulation_engine.run_simulation(params, num_runs=1)
+            
+            # Add run information to the result
+            result['run'] = run_num
+            result['seed'] = seed
+            
+            return result
+        except Exception as e:
+            ErrorHandler.log_error(e, f"Single simulation run {run_num}")
+            return None
     
     def _process_simulation_results(self, raw_results: List[pd.DataFrame]) -> Dict[str, Any]:
         """
@@ -264,13 +294,16 @@ class MonteCarloSimulator:
                 std_val = timestep_data.std()
                 
                 # Calculate 95% confidence interval
-                conf_interval = 1.96 * std_val / np.sqrt(len(raw_results))  # 95% CI
+                # Use actual number of runs for this timestep, not the original list length
+                n_runs = len(timestep_data)
+                conf_interval = 1.96 * std_val / np.sqrt(n_runs) if n_runs > 1 else std_val
                 
                 # Calculate percentiles
                 try:
                     percentiles = timestep_data.quantile([0.05, 0.25, 0.5, 0.75, 0.95]).values
                 except Exception as e:
-                    percentiles = np.array([mean_val] * 5)  # Fallback to mean value
+                    # Fallback to mean value if percentile calculation fails
+                    percentiles = np.array([mean_val] * 5)
                 
                 # Store results
                 processed_results['mean'][var].loc[t] = mean_val
@@ -349,6 +382,9 @@ class MonteCarloSimulator:
         # Get all values for this variable at this timestep across all runs
         raw_data = mc_results['raw_data']
         values = raw_data[(raw_data['timestep'] == timestep)][variable].values
+        
+        if len(values) == 0:
+            raise ValueError(f"No data available for variable '{variable}' at timestep {timestep}")
         
         # Calculate statistics
         mean = np.mean(values)

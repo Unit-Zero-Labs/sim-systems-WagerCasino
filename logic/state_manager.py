@@ -279,12 +279,48 @@ class StateManager:
     @staticmethod
     def set_simulator(simulator: Any) -> None:
         """
-        Set the simulator instance in session state.
+        Set the Monte Carlo simulator instance in session state.
         
         Args:
-            simulator: Simulator instance
+            simulator: MonteCarloSimulator instance
         """
         st.session_state.simulator = simulator
+    
+    @staticmethod
+    def clear_simulation_results() -> None:
+        """
+        Clear all simulation-related state, making it safe to run a new simulation.
+        Should be called before starting a new simulation or when resetting the app.
+        """
+        # Clear simulation results
+        st.session_state.sim_result = None
+        st.session_state.sim_result_displayed = False
+        
+        # Clear simulator instance
+        st.session_state.simulator = None
+        
+        # Clear agent data
+        st.session_state.agent_data = None
+        
+        # Reset simulation type to default
+        st.session_state.simulation_type = "stochastic"
+        
+        # Reset Monte Carlo settings to defaults
+        mc_defaults = get_monte_carlo_defaults()
+        st.session_state.enable_monte_carlo = False
+        st.session_state.monte_carlo_params = {
+            'num_runs': mc_defaults['num_runs'],
+            'show_confidence_intervals': mc_defaults['show_confidence_intervals'],
+            'show_percentiles': mc_defaults['show_percentiles']
+        }
+        
+        # Reset simulation params to defaults (optional - uncomment if needed)
+        # st.session_state.simulation_params = get_simulation_defaults()
+        # st.session_state.agent_params = get_agent_defaults()
+        
+        # Force garbage collection to free memory
+        import gc
+        gc.collect()
     
     @staticmethod
     def update_state_from_ui(key: str, value: Any) -> None:

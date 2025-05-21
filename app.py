@@ -123,7 +123,7 @@ def main():
                 params = display_stochastic_parameter_controls()
                 
                 # Display Monte Carlo controls
-                enable_monte_carlo, num_runs, show_confidence_intervals, show_percentiles = display_monte_carlo_controls()
+                enable_monte_carlo, num_runs, show_confidence_intervals, show_percentiles = display_monte_carlo_controls(key_prefix="stochastic")
                 
                 # Store parameters in session state
                 StateManager.set_simulation_params(params)
@@ -135,8 +135,21 @@ def main():
                 })
                 StateManager.set_simulation_type("stochastic")
                 
+                # Create a row with Run and Reset buttons
+                col1, col2 = st.columns([1, 1])
+                
                 # Run button
-                if st.button("Run Simulation"):
+                with col1:
+                    run_button = st.button("Run Simulation")
+                
+                # Reset button
+                with col2:
+                    if st.button("Reset Simulation", key="reset_stochastic"):
+                        StateManager.clear_simulation_results()
+                        st.success("Simulation state has been reset. You can run a new simulation now.")
+                        st.experimental_rerun()
+                
+                if run_button:
                     # Get parameters from session state
                     params = StateManager.get_simulation_params()
                     enable_monte_carlo = StateManager.get_monte_carlo_enabled()
@@ -203,23 +216,66 @@ def main():
                 # Display agent-based simulation parameter controls
                 agent_params = display_agent_based_parameter_controls()
                 
+                # Add Monte Carlo controls for agent-based simulations
+                enable_monte_carlo, num_runs, show_confidence_intervals, show_percentiles = display_monte_carlo_controls(key_prefix="agent")
+                
                 # Store parameters in session state
                 StateManager.set_agent_params(agent_params)
+                StateManager.set_monte_carlo_enabled(enable_monte_carlo)
+                StateManager.set_monte_carlo_params({
+                    "num_runs": num_runs,
+                    "show_confidence_intervals": show_confidence_intervals,
+                    "show_percentiles": show_percentiles
+                })
+                
+                # Create a row with Run and Reset buttons
+                col1, col2 = st.columns([1, 1])
                 
                 # Run button
-                if st.button("Run Agent-Based Simulation"):
+                with col1:
+                    run_agent_button = st.button("Run Agent-Based Simulation")
+                
+                # Reset button
+                with col2:
+                    if st.button("Reset Simulation", key="reset_agent"):
+                        StateManager.clear_simulation_results()
+                        st.success("Simulation state has been reset. You can run a new simulation now.")
+                        st.experimental_rerun()
+                
+                if run_agent_button:
                     # Get parameters from session state
                     agent_params = StateManager.get_agent_params()
+                    enable_monte_carlo = StateManager.get_monte_carlo_enabled()
+                    mc_params = StateManager.get_monte_carlo_params()
                     
-                    # Run agent-based simulation
-                    with st.spinner("Running agent-based simulation..."):
-                        try:
-                            agent_result = simulation.run_simulation(agent_params, simulation_type="agent")
-                            StateManager.set_simulation_result(agent_result)
-                            StateManager.set_simulation_type("agent")
-                            StateManager.set_agent_data(simulation.agent_data)
-                        except Exception as e:
-                            ErrorHandler.show_error("Error in agent-based simulation", str(e))
+                    if enable_monte_carlo:
+                        # Run Monte Carlo simulation with progress bar
+                        with st.spinner(f"Running Monte Carlo simulation with {mc_params['num_runs']} runs..."):
+                            try:
+                                mc_simulator = MonteCarloSimulator(simulation)
+                                sim_result = mc_simulator.run_simulations(
+                                    agent_params, 
+                                    num_runs=mc_params['num_runs']
+                                )
+                                StateManager.set_simulation_result(sim_result)
+                                StateManager.set_simulator(mc_simulator)
+                                StateManager.set_simulation_type("agent")
+                                # We can't access agent_data from Monte Carlo sims directly
+                                # So create a single instance run to get agent data
+                                single_run = simulation.run_agent_simulation(agent_params)
+                                StateManager.set_agent_data(simulation.agent_data)
+                            except Exception as e:
+                                ErrorHandler.show_error("Error in Monte Carlo simulation", str(e))
+                    else:
+                        # Run single simulation
+                        with st.spinner("Running agent-based simulation..."):
+                            try:
+                                agent_result = simulation.run_simulation(agent_params, simulation_type="agent")
+                                StateManager.set_simulation_result(agent_result)
+                                StateManager.set_simulation_type("agent")
+                                StateManager.set_agent_data(simulation.agent_data)
+                            except Exception as e:
+                                ErrorHandler.show_error("Error in agent-based simulation", str(e))
                 
                 # Display agent-based simulation results if available
                 sim_result = StateManager.get_simulation_result()
@@ -228,9 +284,19 @@ def main():
                 if sim_result is not None and sim_type == "agent":
                     # Get agent data
                     agent_data = StateManager.get_agent_data()
+                    enable_monte_carlo = StateManager.get_monte_carlo_enabled()
+                    mc_params = StateManager.get_monte_carlo_params()
                     
-                    # Display agent-based results
-                    display_agent_based_results(sim_result, agent_data)
+                    if enable_monte_carlo:
+                        # Display Monte Carlo results
+                        display_monte_carlo_results(
+                            sim_result, 
+                            show_confidence_intervals=mc_params['show_confidence_intervals'],
+                            show_percentiles=mc_params['show_percentiles']
+                        )
+                    else:
+                        # Display agent-based results
+                        display_agent_based_results(sim_result, agent_data)
         else:
             st.info("Please upload and process a radCAD Inputs CSV in the 'Load Data' tab to run simulations.")
     

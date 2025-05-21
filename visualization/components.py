@@ -128,9 +128,12 @@ def display_stochastic_parameter_controls() -> Dict[str, Any]:
     }
 
 
-def display_monte_carlo_controls() -> Tuple[bool, int, bool, bool]:
+def display_monte_carlo_controls(key_prefix: str = "stochastic") -> Tuple[bool, int, bool, bool]:
     """
     Display controls for Monte Carlo simulation.
+    
+    Args:
+        key_prefix: Prefix for Streamlit element keys to ensure uniqueness across tabs
     
     Returns:
         Tuple containing:
@@ -143,6 +146,7 @@ def display_monte_carlo_controls() -> Tuple[bool, int, bool, bool]:
     enable_monte_carlo = st.checkbox(
         "Enable Monte Carlo Simulation", 
         value=False,
+        key=f"{key_prefix}_enable_monte_carlo",
         help="Run multiple simulations with different random seeds to analyze uncertainty"
     )
     
@@ -153,11 +157,13 @@ def display_monte_carlo_controls() -> Tuple[bool, int, bool, bool]:
                 "Number of Runs", 
                 10, 100, 50, 
                 step=10,
+                key=f"{key_prefix}_num_runs",
                 help="More runs = more accurate statistics but slower execution"
             )
             show_confidence_intervals = st.checkbox(
                 "Show Confidence Intervals", 
                 value=True,
+                key=f"{key_prefix}_show_conf",
                 help="Display 95% confidence intervals around the mean"
             )
         
@@ -165,6 +171,7 @@ def display_monte_carlo_controls() -> Tuple[bool, int, bool, bool]:
             show_percentiles = st.checkbox(
                 "Show Percentile Bands", 
                 value=True,
+                key=f"{key_prefix}_show_percentiles",
                 help="Display 5th, 25th, 75th, and 95th percentile bands"
             )
     else:
@@ -282,14 +289,24 @@ def display_agent_based_parameter_controls() -> Dict[str, Any]:
         )
     
     with col3:
-        min_staking_apr = st.slider(
-            "Min Staking APR", 
-            0.001, 0.05, 
-            0.01,  # Default value
-            step=0.001,
-            format="%.3f",
-            help="Minimum staking APR floor"
+        staking_share = st.slider(
+            "Staking Share", 
+            0.0, 1.0, 
+            0.5,  # Default value
+            step=0.05,
+            format="%.2f",
+            help="Target percentage of circulating supply to be staked"
         )
+    
+    # Min staking APR
+    min_staking_apr = st.slider(
+        "Min Staking APR", 
+        0.001, 0.05, 
+        0.01,  # Default value
+        step=0.001,
+        format="%.3f",
+        help="Minimum staking APR floor"
+    )
     
     # Return parameters as a dictionary
     return {
@@ -302,7 +319,8 @@ def display_agent_based_parameter_controls() -> Dict[str, Any]:
         "min_token_price": min_token_price,
         "base_staking_apr": base_staking_apr,
         "apr_scaling_factor": apr_scaling_factor,
-        "min_staking_apr": min_staking_apr
+        "min_staking_apr": min_staking_apr,
+        "staking_share": staking_share
     }
 
 
