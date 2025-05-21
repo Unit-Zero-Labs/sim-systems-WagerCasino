@@ -135,8 +135,9 @@ class MonteCarloSimulator:
         processed_results = None
         
         try:
-            # Use a ProcessPoolExecutor for parallel processing
-            with concurrent.futures.ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+            # Use a ThreadPoolExecutor instead of ProcessPoolExecutor to avoid pickle errors
+            # Threads share memory space, so no pickling is needed
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 # Submit all simulation runs
                 future_to_run = {
                     executor.submit(self._run_single_simulation, setting): i 
