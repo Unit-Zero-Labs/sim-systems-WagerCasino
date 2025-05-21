@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional, List, Callable
 import pandas as pd
 
 from tokenomics_data import TokenomicsData
-from utils.config import get_simulation_defaults, get_monte_carlo_defaults
+from utils.config import get_simulation_defaults, get_monte_carlo_defaults, get_agent_defaults
 
 
 class StateManager:
@@ -34,6 +34,11 @@ class StateManager:
         if 'simulation_params' not in st.session_state:
             st.session_state.simulation_params = sim_defaults
         
+        # Agent parameters state
+        agent_defaults = get_agent_defaults()
+        if 'agent_params' not in st.session_state:
+            st.session_state.agent_params = agent_defaults
+        
         # Monte Carlo parameters state
         mc_defaults = get_monte_carlo_defaults()
         if 'enable_monte_carlo' not in st.session_state:
@@ -52,6 +57,18 @@ class StateManager:
         
         if 'sim_result_displayed' not in st.session_state:
             st.session_state.sim_result_displayed = False
+        
+        # Simulation type state (stochastic or agent)
+        if 'simulation_type' not in st.session_state:
+            st.session_state.simulation_type = "stochastic"
+        
+        # Agent-based simulation state
+        if 'agent_data' not in st.session_state:
+            st.session_state.agent_data = None
+        
+        # Monte Carlo simulator instance
+        if 'simulator' not in st.session_state:
+            st.session_state.simulator = None
     
     @staticmethod
     def get_data() -> Optional[TokenomicsData]:
@@ -113,6 +130,26 @@ class StateManager:
             params: Dictionary of simulation parameters
         """
         st.session_state.simulation_params = params
+    
+    @staticmethod
+    def get_agent_params() -> Dict[str, Any]:
+        """
+        Get the agent-based simulation parameters from session state.
+        
+        Returns:
+            Dictionary of agent parameters
+        """
+        return st.session_state.get('agent_params', get_agent_defaults())
+    
+    @staticmethod
+    def set_agent_params(params: Dict[str, Any]) -> None:
+        """
+        Set the agent-based simulation parameters in session state.
+        
+        Args:
+            params: Dictionary of agent parameters
+        """
+        st.session_state.agent_params = params
     
     @staticmethod
     def get_monte_carlo_enabled() -> bool:
@@ -188,6 +225,66 @@ class StateManager:
             Boolean indicating if simulation result has been displayed
         """
         return st.session_state.get('sim_result_displayed', False)
+    
+    @staticmethod
+    def get_simulation_type() -> str:
+        """
+        Get the simulation type from session state.
+        
+        Returns:
+            String indicating the simulation type ("stochastic" or "agent")
+        """
+        return st.session_state.get('simulation_type', "stochastic")
+    
+    @staticmethod
+    def set_simulation_type(sim_type: str) -> None:
+        """
+        Set the simulation type in session state.
+        
+        Args:
+            sim_type: String indicating the simulation type ("stochastic" or "agent")
+        """
+        st.session_state.simulation_type = sim_type
+    
+    @staticmethod
+    def get_agent_data() -> pd.DataFrame:
+        """
+        Get the agent data from session state.
+        
+        Returns:
+            DataFrame with agent data or None
+        """
+        return st.session_state.get('agent_data')
+    
+    @staticmethod
+    def set_agent_data(agent_data: pd.DataFrame) -> None:
+        """
+        Set the agent data in session state.
+        
+        Args:
+            agent_data: DataFrame with agent data
+        """
+        st.session_state.agent_data = agent_data
+    
+    @staticmethod
+    def get_simulator() -> Any:
+        """
+        Get the simulator instance from session state.
+        
+        Returns:
+            Simulator instance or None
+        """
+        return st.session_state.get('simulator')
+    
+    @staticmethod
+    def set_simulator(simulator: Any) -> None:
+        """
+        Set the simulator instance in session state.
+        
+        Args:
+            simulator: Simulator instance
+        """
+        st.session_state.simulator = simulator
     
     @staticmethod
     def update_state_from_ui(key: str, value: Any) -> None:

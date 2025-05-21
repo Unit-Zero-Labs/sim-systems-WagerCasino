@@ -361,20 +361,26 @@ def plot_monte_carlo_results(
     Returns:
         Plotly figure object
     """
-    # Get visualization data
-    x_values = mc_results['mean'][variable].index
-    
-    # Handle both DataFrame and Series cases
-    if hasattr(mc_results['mean'][variable], 'iloc'):
-        if mc_results['mean'][variable].shape[1] > 0:  # If it's a DataFrame with columns
-            mean_values = mc_results['mean'][variable].iloc[:, 0].values
-        else:  # If it's a Series or DataFrame with no columns
-            mean_values = mc_results['mean'][variable].values
-    else:  # Handle the case where it's a dict or other structure
-        mean_values = list(mc_results['mean'][variable].values())
-    
     # Create the plot
     fig = go.Figure()
+    
+    # Get x values (dates or timesteps)
+    if 'mean' not in mc_results or variable not in mc_results['mean']:
+        raise ValueError(f"Variable '{variable}' not found in Monte Carlo results")
+        
+    x_values = mc_results['mean'][variable].index
+    
+    # Handle different data formats for mean values
+    if isinstance(mc_results['mean'][variable], pd.DataFrame):
+        if mc_results['mean'][variable].shape[1] > 0:
+            mean_values = mc_results['mean'][variable].iloc[:, 0].values
+        else:
+            mean_values = mc_results['mean'][variable].values.flatten()
+    elif isinstance(mc_results['mean'][variable], pd.Series):
+        mean_values = mc_results['mean'][variable].values
+    else:
+        # Handle other formats
+        mean_values = np.array(list(mc_results['mean'][variable]))
     
     # Add mean line
     fig.add_trace(go.Scatter(
@@ -386,49 +392,101 @@ def plot_monte_carlo_results(
     ))
     
     # Add confidence intervals
-    if show_confidence_intervals:
-        conf_intervals = mc_results['conf_intervals'][variable].values
+    if show_confidence_intervals and 'conf_intervals' in mc_results and variable in mc_results['conf_intervals']:
+        conf_intervals = mc_results['conf_intervals'][variable]
         
-        # Check if conf_intervals is a 2D array with proper shape
-        if isinstance(conf_intervals, np.ndarray) and conf_intervals.ndim == 2 and conf_intervals.shape[1] == 2:
-            lower_ci = [ci[0] for ci in conf_intervals]
-            upper_ci = [ci[1] for ci in conf_intervals]
+        # Handle different data formats for confidence intervals
+        if isinstance(conf_intervals, pd.DataFrame) and 'lower' in conf_intervals.columns and 'upper' in conf_intervals.columns:
+            lower_ci = conf_intervals['lower'].values
+            upper_ci = conf_intervals['upper'].values
+        elif isinstance(conf_intervals, np.ndarray) and conf_intervals.ndim == 2 and conf_intervals.shape[1] == 2:
+            lower_ci = conf_intervals[:, 0]
+            upper_ci = conf_intervals[:, 1]
         else:
-            # Try to handle the case where it's not a 2D array with proper shape
+            # Try to extract confidence intervals from various formats
             try:
-                lower_ci = [ci.iloc[0] if hasattr(ci, 'iloc') else ci[0] for ci in conf_intervals]
-                upper_ci = [ci.iloc[1] if hasattr(ci, 'iloc') else ci[1] for ci in conf_intervals]
+                lower_ci = []
+                upper_ci = []
+                for idx in range(len(conf_intervals)):
+                    val = conf_intervals.iloc[idx] if hasattr(conf_intervals, 'iloc') else conf_intervals[idx]
+                    if hasattr(val, '__getitem__') and len(val) >= 2:
+                        lower_ci.append(val[0])
+                        upper_ci.append(val[1])
+                    else:
+                        # Skip invalid values
+                        continue
             except (IndexError, AttributeError, TypeError):
                 # Fallback: don't show confidence intervals
-                lower_ci = mean_values
-                upper_ci = mean_values
+                lower_ci = []
+                upper_ci = []
         
-        fig.add_trace(go.Scatter(
-            x=x_values,
-            y=upper_ci,
-            mode='lines',
-            name='95% CI Upper',
-            line=dict(width=0),
-            showlegend=False
-        ))
-        
-        fig.add_trace(go.Scatter(
-            x=x_values,
-            y=lower_ci,
-            mode='lines',
-            name='95% CI Lower',
-            line=dict(width=0),
-            fill='tonexty',
-            fillcolor='rgba(0, 0, 255, 0.2)',
-            showlegend=False
-        ))
+        if len(lower_ci) > 0 and len(upper_ci) > 0:
+            # Ensure we have equal length arrays
+            min_len = min(len(lower_ci), len(upper_ci), len(x_values))
+            
+            fig.add_trace(go.Scatter(
+                x=x_values[:min_len],
+                y=upper_ci[:min_len],
+                mode='lines',
+                name='95% CI Upper',
+                line=dict(width=0),
+                showlegend=False
+            ))
+            
+            fig.add_trace(go.Scatter(
+                x=x_values[:min_len],
+                y=lower_ci[:min_len],
+                mode='lines',
+                name='95% CI Lower',
+                line=dict(width=0),
+                fill='tonexty',
+                fillcolor='rgba(0, 0, 255, 0.2)',
+                showlegend=False
+            ))
     
     # Add percentile bands
-    if show_percentiles:
-        percentiles = mc_results['percentiles'][variable].values
+    if show_percentiles and 'percentiles' in mc_results and variable in mc_results['percentiles']:
+        percentiles = mc_results['percentiles'][variable]
         
         # Check if percentiles is properly structured with 5 percentile values
-        if isinstance(percentiles, np.ndarray) and percentiles.ndim == 2 and percentiles.shape[1] >= 5:
+        if isinstance(percentiles, pd.DataFrame) and percentiles.shape[1] >= 5:
+            # Get the column indices for each percentile
+            p5_idx, p25_idx, p50_idx, p75_idx, p95_idx = 0, 1, 2, 3, 4
+            
+            # 5th and 95th percentiles
+            fig.add_trace(go.Scatter(
+                x=x_values,
+                y=percentiles.iloc[:, p95_idx].values,  # 95th percentile
+                mode='lines',
+                name='95th Percentile',
+                line=dict(color='rgba(255, 0, 0, 0.5)', width=1, dash='dot')
+            ))
+            
+            fig.add_trace(go.Scatter(
+                x=x_values,
+                y=percentiles.iloc[:, p5_idx].values,  # 5th percentile
+                mode='lines',
+                name='5th Percentile',
+                line=dict(color='rgba(255, 0, 0, 0.5)', width=1, dash='dot')
+            ))
+            
+            # 25th and 75th percentiles
+            fig.add_trace(go.Scatter(
+                x=x_values,
+                y=percentiles.iloc[:, p75_idx].values,  # 75th percentile
+                mode='lines',
+                name='75th Percentile',
+                line=dict(color='rgba(0, 255, 0, 0.5)', width=1, dash='dot')
+            ))
+            
+            fig.add_trace(go.Scatter(
+                x=x_values,
+                y=percentiles.iloc[:, p25_idx].values,  # 25th percentile
+                mode='lines',
+                name='25th Percentile',
+                line=dict(color='rgba(0, 255, 0, 0.5)', width=1, dash='dot')
+            ))
+        elif isinstance(percentiles, np.ndarray) and percentiles.ndim == 2 and percentiles.shape[1] >= 5:
             # 5th and 95th percentiles
             fig.add_trace(go.Scatter(
                 x=x_values,
@@ -566,6 +624,116 @@ def plot_distribution_at_timestep(
     }
     
     return hist_fig, stats
+
+
+def plot_time_series_from_simulator(
+    simulator, 
+    variable: str, 
+    show_confidence_intervals: bool = True, 
+    show_percentiles: bool = True
+) -> go.Figure:
+    """
+    Create a plot using time series data directly from a Monte Carlo simulator.
+    
+    Args:
+        simulator: MonteCarloSimulator instance with results
+        variable: The state variable to visualize
+        show_confidence_intervals: Whether to show 95% confidence intervals
+        show_percentiles: Whether to show percentile bands
+        
+    Returns:
+        Plotly figure object
+    """
+    # Get time series data from simulator
+    time_series_data = simulator.get_time_series_data(variable)
+    
+    # Create plot
+    fig = go.Figure()
+    
+    # Add mean line
+    fig.add_trace(go.Scatter(
+        x=time_series_data['x_values'],
+        y=time_series_data['mean'],
+        mode='lines',
+        name='Mean',
+        line=dict(color='blue', width=2)
+    ))
+    
+    # Add confidence intervals
+    if show_confidence_intervals and 'lower_ci' in time_series_data and 'upper_ci' in time_series_data:
+        fig.add_trace(go.Scatter(
+            x=time_series_data['x_values'],
+            y=time_series_data['upper_ci'],
+            mode='lines',
+            name='95% CI Upper',
+            line=dict(width=0),
+            showlegend=False
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=time_series_data['x_values'],
+            y=time_series_data['lower_ci'],
+            mode='lines',
+            name='95% CI Lower',
+            line=dict(width=0),
+            fill='tonexty',
+            fillcolor='rgba(0, 0, 255, 0.2)',
+            showlegend=False
+        ))
+    
+    # Add percentile bands
+    if show_percentiles and 'percentiles' in time_series_data:
+        percentiles = time_series_data['percentiles']
+        
+        # 5th and 95th percentiles
+        fig.add_trace(go.Scatter(
+            x=time_series_data['x_values'],
+            y=[p[4] for p in percentiles],  # 95th percentile
+            mode='lines',
+            name='95th Percentile',
+            line=dict(color='rgba(255, 0, 0, 0.5)', width=1, dash='dot')
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=time_series_data['x_values'],
+            y=[p[0] for p in percentiles],  # 5th percentile
+            mode='lines',
+            name='5th Percentile',
+            line=dict(color='rgba(255, 0, 0, 0.5)', width=1, dash='dot')
+        ))
+        
+        # 25th and 75th percentiles
+        fig.add_trace(go.Scatter(
+            x=time_series_data['x_values'],
+            y=[p[3] for p in percentiles],  # 75th percentile
+            mode='lines',
+            name='75th Percentile',
+            line=dict(color='rgba(0, 255, 0, 0.5)', width=1, dash='dot')
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=time_series_data['x_values'],
+            y=[p[1] for p in percentiles],  # 25th percentile
+            mode='lines',
+            name='25th Percentile',
+            line=dict(color='rgba(0, 255, 0, 0.5)', width=1, dash='dot')
+        ))
+    
+    # Update layout
+    fig.update_layout(
+        title=f"Monte Carlo Simulation: {variable.replace('_', ' ').title()}",
+        xaxis_title="Date",
+        yaxis_title=variable.replace('_', ' ').title(),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+    )
+    
+    return apply_chart_styling(fig)
 
 
 def plot_token_supply_simulation(sim_result: pd.DataFrame) -> go.Figure:

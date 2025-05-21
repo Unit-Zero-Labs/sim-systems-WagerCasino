@@ -7,6 +7,7 @@ import streamlit as st
 from typing import List, Dict, Any, Optional, Callable, Tuple, Union
 import pandas as pd
 import plotly.graph_objects as go
+import numpy as np
 
 from .charts import (
     plot_token_supply_simulation,
@@ -14,7 +15,8 @@ from .charts import (
     plot_market_cap_simulation,
     plot_staking_simulation,
     plot_monte_carlo_results,
-    plot_distribution_at_timestep
+    plot_distribution_at_timestep,
+    plot_time_series_from_simulator
 )
 
 
@@ -72,14 +74,14 @@ def create_plot_container(plot_function: Callable, data: Any, *args, **kwargs) -
     st.markdown('</div>', unsafe_allow_html=True)
 
 
-def display_simulation_parameter_controls() -> Dict[str, Any]:
+def display_stochastic_parameter_controls() -> Dict[str, Any]:
     """
-    Display controls for simulation parameters.
+    Display controls for stochastic simulation parameters.
     
     Returns:
         Dictionary of parameter values
     """
-    st.subheader("Simulation Parameters")
+    st.subheader("Stochastic Model Parameters")
     col1, col2 = st.columns(2)
     
     with col1:
@@ -87,14 +89,16 @@ def display_simulation_parameter_controls() -> Dict[str, Any]:
             "Staking Share", 
             0.0, 1.0, 
             0.75,  # Default value
-            step=0.01
+            step=0.01,
+            help="Fraction of circulating supply that gets staked"
         )
         
         staking_apr_multiplier = st.slider(
             "Staking APR Multiplier", 
             0.5, 2.0, 
             1.0,  # Default value
-            step=0.1
+            step=0.1,
+            help="Multiplier for the staking APR (base APR × multiplier)"
         )
     
     with col2:
@@ -103,14 +107,16 @@ def display_simulation_parameter_controls() -> Dict[str, Any]:
             0.01, 0.05, 
             0.03,  # Default value
             step=0.001,
-            format="$%.5f"
+            format="$%.5f",
+            help="Initial token price at launch"
         )
         
         market_volatility = st.slider(
             "Market Volatility", 
             0.0, 1.0, 
             0.2,  # Default value
-            step=0.05
+            step=0.05,
+            help="Level of price volatility in the market (0=none, 1=high)"
         )
     
     # Return parameters as a dictionary
@@ -134,22 +140,170 @@ def display_monte_carlo_controls() -> Tuple[bool, int, bool, bool]:
         - show_percentiles: Whether to show percentile bands
     """
     st.subheader("Monte Carlo Simulation")
-    enable_monte_carlo = st.checkbox("Enable Monte Carlo Simulation", value=False)
+    enable_monte_carlo = st.checkbox(
+        "Enable Monte Carlo Simulation", 
+        value=False,
+        help="Run multiple simulations with different random seeds to analyze uncertainty"
+    )
     
     if enable_monte_carlo:
         col1, col2 = st.columns(2)
         with col1:
-            num_runs = st.slider("Number of Runs", 10, 100, 50, step=10)
-            show_confidence_intervals = st.checkbox("Show Confidence Intervals", value=True)
+            num_runs = st.slider(
+                "Number of Runs", 
+                10, 100, 50, 
+                step=10,
+                help="More runs = more accurate statistics but slower execution"
+            )
+            show_confidence_intervals = st.checkbox(
+                "Show Confidence Intervals", 
+                value=True,
+                help="Display 95% confidence intervals around the mean"
+            )
         
         with col2:
-            show_percentiles = st.checkbox("Show Percentile Bands", value=True)
+            show_percentiles = st.checkbox(
+                "Show Percentile Bands", 
+                value=True,
+                help="Display 5th, 25th, 75th, and 95th percentile bands"
+            )
     else:
         num_runs = 1
         show_confidence_intervals = True
         show_percentiles = True
     
     return enable_monte_carlo, num_runs, show_confidence_intervals, show_percentiles
+
+
+def display_agent_based_parameter_controls() -> Dict[str, Any]:
+    """
+    Display controls for agent-based simulation parameters.
+    
+    Returns:
+        Dictionary of parameter values
+    """
+    st.subheader("Agent-Based Model Parameters")
+    
+    # Agent counts
+    st.write("Agent Populations")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        random_trader_count = st.slider(
+            "Random Traders", 
+            0, 50, 
+            20,  # Default value
+            step=5,
+            help="Agents that make random trading decisions"
+        )
+    
+    with col2:
+        trend_follower_count = st.slider(
+            "Trend Followers", 
+            0, 50, 
+            15,  # Default value
+            step=5,
+            help="Agents that buy in uptrends and sell in downtrends"
+        )
+    
+    with col3:
+        staking_agent_count = st.slider(
+            "Staking Agents", 
+            0, 50, 
+            10,  # Default value
+            step=5,
+            help="Agents that focus on staking based on APR"
+        )
+    
+    # Market parameters
+    st.write("Market Parameters")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        token_price = st.slider(
+            "Initial Token Price", 
+            0.01, 0.05, 
+            0.03,  # Default value
+            step=0.001,
+            format="$%.5f",
+            help="Initial token price at the start of simulation"
+        )
+        
+        liquidity_factor = st.slider(
+            "Liquidity Factor", 
+            0.00001, 0.001, 
+            0.0001,  # Default value
+            step=0.00001,
+            format="%.5f",
+            help="How much price impact from buying/selling (lower=deeper liquidity)"
+        )
+    
+    with col2:
+        max_price_change_pct = st.slider(
+            "Max Price Change %", 
+            0.01, 0.5, 
+            0.1,  # Default value
+            step=0.01,
+            format="%.2f",
+            help="Maximum price change per time step"
+        )
+        
+        min_token_price = st.slider(
+            "Min Token Price", 
+            0.0001, 0.01, 
+            0.001,  # Default value
+            step=0.0001,
+            format="$%.4f",
+            help="Minimum token price floor"
+        )
+    
+    # Staking parameters
+    st.write("Staking Parameters")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        base_staking_apr = st.slider(
+            "Base Staking APR", 
+            0.01, 0.2, 
+            0.05,  # Default value
+            step=0.01,
+            format="%.2f",
+            help="Initial staking annual percentage rate"
+        )
+    
+    with col2:
+        apr_scaling_factor = st.slider(
+            "APR Scaling Factor", 
+            0.1, 1.0, 
+            0.5,  # Default value
+            step=0.1,
+            format="%.1f",
+            help="How quickly APR decreases as more tokens are staked"
+        )
+    
+    with col3:
+        min_staking_apr = st.slider(
+            "Min Staking APR", 
+            0.001, 0.05, 
+            0.01,  # Default value
+            step=0.001,
+            format="%.3f",
+            help="Minimum staking APR floor"
+        )
+    
+    # Return parameters as a dictionary
+    return {
+        "token_price": token_price,
+        "random_trader_count": random_trader_count,
+        "trend_follower_count": trend_follower_count,
+        "staking_agent_count": staking_agent_count,
+        "liquidity_factor": liquidity_factor,
+        "max_price_change_pct": max_price_change_pct,
+        "min_token_price": min_token_price,
+        "base_staking_apr": base_staking_apr,
+        "apr_scaling_factor": apr_scaling_factor,
+        "min_staking_apr": min_staking_apr
+    }
 
 
 def display_single_run_results(sim_result: pd.DataFrame) -> None:
@@ -159,10 +313,6 @@ def display_single_run_results(sim_result: pd.DataFrame) -> None:
     Args:
         sim_result: DataFrame with simulation results
     """
-    # Debug info
-    st.info(f"Simulation result columns: {sim_result.columns.tolist()}")
-    st.info(f"Initial values from simulation: token_supply={sim_result['token_supply'].iloc[0]:,.0f}, circulating_supply={sim_result['circulating_supply'].iloc[0]:,.0f}")
-    
     # Create tabs for different metrics
     metric_tabs = st.tabs(["Token Supply", "Token Price", "Market Cap", "Staking"])
     
@@ -395,3 +545,201 @@ def display_monte_carlo_results(
             st.error(f"Error creating distribution plot: {str(e)}")
             
         st.markdown('</div>', unsafe_allow_html=True)
+
+
+def display_agent_based_results(sim_result: pd.DataFrame, agent_data: pd.DataFrame) -> None:
+    """
+    Display the results of an agent-based simulation.
+    
+    Args:
+        sim_result: DataFrame with simulation results
+        agent_data: DataFrame with agent data (portfolio values, holdings, etc.)
+    """
+    # Create tabs for different aspects of the results
+    result_tabs = st.tabs(["Market Metrics", "Agent Behavior", "Agent Portfolios"])
+    
+    with result_tabs[0]:
+        # Display market metrics (similar to single_run_results but with different context)
+        st.subheader("Market Metrics Over Time")
+        
+        # Create subtabs for different metrics
+        metric_tabs = st.tabs(["Token Price", "Staking", "Supply", "Market Cap"])
+        
+        with metric_tabs[0]:
+            # Plot token price
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            fig = plot_token_price_simulation(sim_result)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Display price statistics
+            st.subheader("Price Metrics")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Initial Price", f"${sim_result['token_price'].iloc[0]:.5f}")
+            with col2:
+                st.metric("Final Price", f"${sim_result['token_price'].iloc[-1]:.5f}")
+            with col3:
+                price_change_pct = (sim_result['token_price'].iloc[-1] / sim_result['token_price'].iloc[0] - 1) * 100
+                st.metric("Price Change", f"{price_change_pct:.2f}%")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with metric_tabs[1]:
+            # Plot staking
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            fig = plot_staking_simulation(sim_result)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Display staking statistics
+            st.subheader("Staking Metrics")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Final Staked Tokens", f"{sim_result['staked_tokens'].iloc[-1]:,.0f}")
+            with col2:
+                staking_ratio = sim_result['staked_tokens'].iloc[-1] / sim_result['circulating_supply'].iloc[-1] if sim_result['circulating_supply'].iloc[-1] > 0 else 0
+                st.metric("Staking Ratio", f"{staking_ratio:.2%}")
+            with col3:
+                st.metric("Final Staking APR", f"{sim_result['staking_apr'].iloc[-1]:.2%}")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with metric_tabs[2]:
+            # Plot token supply
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            fig = plot_token_supply_simulation(sim_result)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Display supply statistics
+            st.subheader("Supply Metrics")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Circulating Supply", f"{sim_result['circulating_supply'].iloc[-1]:,.0f}")
+            with col2:
+                effective_supply = sim_result['circulating_supply'].iloc[-1] - sim_result['staked_tokens'].iloc[-1]
+                st.metric("Effective Circulating Supply", f"{effective_supply:,.0f}")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with metric_tabs[3]:
+            # Plot market cap
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            fig = plot_market_cap_simulation(sim_result)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Display market cap statistics
+            st.subheader("Valuation Metrics")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Final Market Cap", f"${sim_result['market_cap'].iloc[-1]:,.2f}")
+            with col2:
+                mc_change_pct = (sim_result['market_cap'].iloc[-1] / sim_result['market_cap'].iloc[0] - 1) * 100 if sim_result['market_cap'].iloc[0] > 0 else 0
+                st.metric("Market Cap Change", f"{mc_change_pct:.2f}%")
+            st.markdown('</div>', unsafe_allow_html=True)
+    
+    with result_tabs[1]:
+        # Display agent behavior analysis
+        st.subheader("Agent Behavior Analysis")
+        
+        if agent_data is None or len(agent_data) == 0:
+            st.error("No agent data available for analysis.")
+            return
+        
+        # Aggregate statistics by agent type
+        agent_types = agent_data["type"].unique()
+        
+        # Create bar chart for token holdings by agent type
+        token_holdings = agent_data.groupby("type")["tokens"].sum()
+        staked_holdings = agent_data.groupby("type")["staked_tokens"].sum()
+        
+        # Calculate total holdings including staked tokens
+        total_holdings = pd.DataFrame({
+            "tokens": token_holdings,
+            "staked_tokens": staked_holdings
+        })
+        total_holdings["total"] = total_holdings["tokens"] + total_holdings["staked_tokens"]
+        
+        # Create holdings figure
+        fig_holdings = go.Figure()
+        fig_holdings.add_trace(go.Bar(
+            x=total_holdings.index,
+            y=total_holdings["tokens"],
+            name="Liquid Tokens",
+            marker_color="blue"
+        ))
+        fig_holdings.add_trace(go.Bar(
+            x=total_holdings.index,
+            y=total_holdings["staked_tokens"],
+            name="Staked Tokens",
+            marker_color="green"
+        ))
+        fig_holdings.update_layout(
+            title="Token Holdings by Agent Type",
+            xaxis_title="Agent Type",
+            yaxis_title="Tokens",
+            barmode="stack"
+        )
+        
+        st.plotly_chart(fig_holdings, use_container_width=True)
+        
+        # Create bar chart for portfolio value by agent type
+        portfolio_value = agent_data.groupby("type")["portfolio_value"].sum()
+        
+        fig_portfolio = go.Figure(go.Bar(
+            x=portfolio_value.index,
+            y=portfolio_value.values,
+            marker_color="purple"
+        ))
+        fig_portfolio.update_layout(
+            title="Total Portfolio Value by Agent Type",
+            xaxis_title="Agent Type",
+            yaxis_title="Portfolio Value (USD)"
+        )
+        
+        st.plotly_chart(fig_portfolio, use_container_width=True)
+    
+    with result_tabs[2]:
+        # Display individual agent portfolios
+        st.subheader("Individual Agent Portfolios")
+        
+        if agent_data is None or len(agent_data) == 0:
+            st.error("No agent data available for analysis.")
+            return
+        
+        # Filter by agent type
+        agent_type_filter = st.selectbox(
+            "Filter by Agent Type",
+            options=["All"] + list(agent_data["type"].unique()),
+            index=0
+        )
+        
+        filtered_data = agent_data
+        if agent_type_filter != "All":
+            filtered_data = agent_data[agent_data["type"] == agent_type_filter]
+        
+        # Display agent data as a table
+        st.dataframe(
+            filtered_data.style.format({
+                "tokens": "{:,.2f}",
+                "staked_tokens": "{:,.2f}",
+                "cash": "${:,.2f}",
+                "portfolio_value": "${:,.2f}"
+            }),
+            use_container_width=True
+        )
+        
+        # Display distribution of portfolio values
+        fig_dist = go.Figure()
+        
+        for agent_type in agent_data["type"].unique():
+            type_data = agent_data[agent_data["type"] == agent_type]
+            fig_dist.add_trace(go.Box(
+                y=type_data["portfolio_value"],
+                name=agent_type,
+                boxpoints="all",
+                jitter=0.3,
+                pointpos=-1.8
+            ))
+        
+        fig_dist.update_layout(
+            title="Distribution of Portfolio Values by Agent Type",
+            yaxis_title="Portfolio Value (USD)"
+        )
+        
+        st.plotly_chart(fig_dist, use_container_width=True)

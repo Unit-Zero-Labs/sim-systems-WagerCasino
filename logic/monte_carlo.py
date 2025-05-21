@@ -1,11 +1,11 @@
 """
 Monte Carlo simulation module for the Unit Zero Labs Tokenomics Engine.
-Provides optimized implementation of Monte Carlo simulations.
+Provides a simplified, robust implementation of Monte Carlo simulations.
 """
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 import time
 import concurrent.futures
 import streamlit as st
@@ -18,7 +18,7 @@ from utils.error_handler import ErrorHandler
 class MonteCarloSimulator:
     """
     Monte Carlo simulator for tokenomics simulations.
-    Optimizes performance through parallelization.
+    Provides an easy-to-use interface for running stochastic simulations.
     """
     
     def __init__(self, simulation_engine):
@@ -30,11 +30,85 @@ class MonteCarloSimulator:
         """
         self.simulation_engine = simulation_engine
         self.max_workers = min(multiprocessing.cpu_count(), 4)  # Use at most 4 cores
+        self.results = None  # Store the most recent simulation results
     
-    def run_parallel_simulations(
+    def run_simulations(
         self, 
         params: Dict[str, Any], 
-        num_runs: int, 
+        num_runs: int = 50,
+        show_progress: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Run Monte Carlo simulations with the given parameters.
+        Simplified interface that handles progress display internally.
+        
+        Args:
+            params: Simulation parameters
+            num_runs: Number of simulation runs (default: 50)
+            show_progress: Whether to show a progress bar (default: True)
+            
+        Returns:
+            Dictionary with Monte Carlo simulation results
+        """
+        if show_progress:
+            # Use the progress bar method
+            self.results = self.run_simulations_with_progress(params, num_runs)
+        else:
+            # Run without progress bar
+            self.results = self._run_parallel_simulations(params, num_runs)
+            
+        return self.results
+    
+    def run_simulations_with_progress(
+        self, 
+        params: Dict[str, Any], 
+        num_runs: int = 50
+    ) -> Dict[str, Any]:
+        """
+        Run Monte Carlo simulations with a progress bar.
+        
+        Args:
+            params: Simulation parameters
+            num_runs: Number of simulation runs (default: 50)
+            
+        Returns:
+            Dictionary with Monte Carlo simulation results
+        """
+        # Create a progress bar
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Define progress callback
+        def update_progress(progress):
+            progress_bar.progress(progress)
+            status_text.text(f"Running Monte Carlo simulation: {int(progress * 100)}% complete")
+        
+        try:
+            # Run the simulations
+            self.results = self._run_parallel_simulations(params, num_runs, update_progress)
+            
+            # Complete the progress bar
+            progress_bar.progress(1.0)
+            status_text.text("Monte Carlo simulation complete!")
+            
+            return self.results
+        except Exception as e:
+            # Show error
+            progress_bar.progress(1.0)
+            status_text.text(f"Error in Monte Carlo simulation: {str(e)}")
+            raise
+        finally:
+            # Small delay to show completion
+            time.sleep(0.5)
+            
+            # Clear the progress elements
+            progress_bar.empty()
+            status_text.empty()
+    
+    def _run_parallel_simulations(
+        self, 
+        params: Dict[str, Any], 
+        num_runs: int,
         progress_callback: Optional[callable] = None
     ) -> Dict[str, Any]:
         """
@@ -233,18 +307,39 @@ class MonteCarloSimulator:
         
         return processed_results
     
-    @staticmethod
     def get_distribution_at_timestep(
-        mc_results: Dict[str, Any], 
+        self, 
         variable: str, 
         timestep: int
     ) -> Dict[str, Any]:
         """
         Get probability distribution data for a specific variable at a specific timestep.
+        Uses the stored results from the last simulation run.
+        
+        Args:
+            variable: The state variable to analyze (e.g., 'token_price', 'market_cap')
+            timestep: The timestep to analyze
+            
+        Returns:
+            Dictionary with distribution data
+        """
+        if self.results is None:
+            raise ValueError("No simulation results available. Run a simulation first.")
+            
+        return self._get_distribution_data(self.results, variable, timestep)
+    
+    @staticmethod
+    def _get_distribution_data(
+        mc_results: Dict[str, Any], 
+        variable: str, 
+        timestep: int
+    ) -> Dict[str, Any]:
+        """
+        Extract distribution data from Monte Carlo results.
         
         Args:
             mc_results: Results from a Monte Carlo simulation run
-            variable: The state variable to analyze (e.g., 'token_price', 'market_cap')
+            variable: The state variable to analyze
             timestep: The timestep to analyze
             
         Returns:
@@ -272,50 +367,30 @@ class MonteCarloSimulator:
         
         return dist_data
     
-    @staticmethod
-    def run_monte_carlo_with_progress(
-        simulator, 
-        params: Dict[str, Any], 
-        num_runs: int
-    ) -> Dict[str, Any]:
+    def get_time_series_data(self, variable: str) -> Dict[str, Any]:
         """
-        Run Monte Carlo simulation with a progress bar.
+        Get time series data for a specific variable across all timesteps.
+        Uses the stored results from the last simulation run.
         
         Args:
-            simulator: MonteCarloSimulator instance
-            params: Simulation parameters
-            num_runs: Number of simulation runs
+            variable: The state variable to extract (e.g., 'token_price', 'market_cap')
             
         Returns:
-            Dictionary with Monte Carlo simulation results
+            Dictionary with time series data
         """
-        # Create a progress bar
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        if self.results is None:
+            raise ValueError("No simulation results available. Run a simulation first.")
+            
+        if variable not in self.results['mean']:
+            raise ValueError(f"Variable '{variable}' not found in simulation results")
+            
+        # Extract time series data
+        time_series_data = {
+            'x_values': self.results['mean'][variable].index,
+            'mean': self.results['mean'][variable].values.flatten(),
+            'lower_ci': [ci[0] for ci in self.results['conf_intervals'][variable].values],
+            'upper_ci': [ci[1] for ci in self.results['conf_intervals'][variable].values],
+            'percentiles': self.results['percentiles'][variable].values
+        }
         
-        # Define progress callback
-        def update_progress(progress):
-            progress_bar.progress(progress)
-            status_text.text(f"Running Monte Carlo simulation: {int(progress * 100)}% complete")
-        
-        try:
-            # Run the simulations
-            results = simulator.run_parallel_simulations(params, num_runs, update_progress)
-            
-            # Complete the progress bar
-            progress_bar.progress(1.0)
-            status_text.text("Monte Carlo simulation complete!")
-            
-            return results
-        except Exception as e:
-            # Show error
-            progress_bar.progress(1.0)
-            status_text.text(f"Error in Monte Carlo simulation: {str(e)}")
-            raise
-        finally:
-            # Small delay to show completion
-            time.sleep(0.5)
-            
-            # Clear the progress elements
-            progress_bar.empty()
-            status_text.empty()
+        return time_series_data

@@ -61,6 +61,17 @@ class Config:
                         "default_show_percentiles": True,
                         "max_runs": 100
                     },
+                    "agent_based": {
+                        "default_random_trader_count": 20,
+                        "default_trend_follower_count": 15,
+                        "default_staking_agent_count": 10,
+                        "default_liquidity_factor": 0.0001,
+                        "default_max_price_change_pct": 0.1,
+                        "default_min_token_price": 0.001,
+                        "default_base_staking_apr": 0.05,
+                        "default_apr_scaling_factor": 0.5,
+                        "default_min_staking_apr": 0.01
+                    },
                     "ui": {
                         "default_theme": "dark",
                         "company_name": "Unit Zero Labs",
@@ -87,6 +98,17 @@ class Config:
                     "default_show_confidence_intervals": True,
                     "default_show_percentiles": True,
                     "max_runs": 100
+                },
+                "agent_based": {
+                    "default_random_trader_count": 20,
+                    "default_trend_follower_count": 15,
+                    "default_staking_agent_count": 10,
+                    "default_liquidity_factor": 0.0001,
+                    "default_max_price_change_pct": 0.1,
+                    "default_min_token_price": 0.001,
+                    "default_base_staking_apr": 0.05,
+                    "default_apr_scaling_factor": 0.5,
+                    "default_min_staking_apr": 0.01
                 },
                 "ui": {
                     "default_theme": "dark",
@@ -199,6 +221,27 @@ def get_monte_carlo_defaults() -> Dict[str, Any]:
         "show_confidence_intervals": config.get("monte_carlo.default_show_confidence_intervals", True),
         "show_percentiles": config.get("monte_carlo.default_show_percentiles", True),
         "max_runs": config.get("monte_carlo.max_runs", 100)
+    }
+
+
+def get_agent_defaults() -> Dict[str, Any]:
+    """
+    Get default agent-based simulation parameters.
+    
+    Returns:
+        Dict: Default agent-based parameters
+    """
+    return {
+        "token_price": config.get("simulation.default_token_price", 0.03),
+        "random_trader_count": config.get("agent_based.default_random_trader_count", 20),
+        "trend_follower_count": config.get("agent_based.default_trend_follower_count", 15),
+        "staking_agent_count": config.get("agent_based.default_staking_agent_count", 10),
+        "liquidity_factor": config.get("agent_based.default_liquidity_factor", 0.0001),
+        "max_price_change_pct": config.get("agent_based.default_max_price_change_pct", 0.1),
+        "min_token_price": config.get("agent_based.default_min_token_price", 0.001),
+        "base_staking_apr": config.get("agent_based.default_base_staking_apr", 0.05),
+        "apr_scaling_factor": config.get("agent_based.default_apr_scaling_factor", 0.5),
+        "min_staking_apr": config.get("agent_based.default_min_staking_apr", 0.01)
     }
 
 

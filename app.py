@@ -17,10 +17,12 @@ from visualization.styles import apply_custom_css, set_page_config
 from visualization.components import (
     create_header,
     create_plot_container,
-    display_simulation_parameter_controls,
+    display_stochastic_parameter_controls,
     display_monte_carlo_controls,
+    display_agent_based_parameter_controls,
     display_single_run_results,
-    display_monte_carlo_results
+    display_monte_carlo_results,
+    display_agent_based_results
 )
 from visualization.charts import (
     plot_token_buckets,
@@ -29,7 +31,8 @@ from visualization.charts import (
     plot_dex_liquidity,
     plot_utility_allocations,
     plot_monthly_utility,
-    plot_staking_apr
+    plot_staking_apr,
+    plot_time_series_from_simulator
 )
 
 
@@ -106,75 +109,128 @@ def main():
             # Create a TokenomicsSimulation instance
             simulation = TokenomicsSimulation(data_for_simulation)
             
-            # Display simulation parameter controls
-            params = display_simulation_parameter_controls()
+            # Create tabs for different simulation types
+            sim_tab_stochastic, sim_tab_agent = st.tabs(["Stochastic Modeling", "Agent-Based Modeling"])
             
-            # Display Monte Carlo controls
-            enable_monte_carlo, num_runs, show_confidence_intervals, show_percentiles = display_monte_carlo_controls()
-            
-            # Store parameters in session state
-            StateManager.set_simulation_params(params)
-            StateManager.set_monte_carlo_enabled(enable_monte_carlo)
-            StateManager.set_monte_carlo_params({
-                "num_runs": num_runs,
-                "show_confidence_intervals": show_confidence_intervals,
-                "show_percentiles": show_percentiles
-            })
-            
-            # Run button
-            if st.button("Run Simulation"):
-                # Get parameters from session state
-                params = StateManager.get_simulation_params()
-                enable_monte_carlo = StateManager.get_monte_carlo_enabled()
-                mc_params = StateManager.get_monte_carlo_params()
+            with sim_tab_stochastic:
+                st.subheader("Stochastic Tokenomics Model")
+                st.write("""
+                This model uses a stochastic approach to simulate tokenomics metrics over time.
+                It's based on the radCAD framework and allows for Monte Carlo simulations with multiple runs.
+                """)
                 
-                if enable_monte_carlo:
-                    # Run Monte Carlo simulation with progress bar
-                    with st.spinner(f"Running Monte Carlo simulation with {mc_params['num_runs']} runs..."):
-                        try:
-                            mc_simulator = MonteCarloSimulator(simulation)
-                            sim_result = MonteCarloSimulator.run_monte_carlo_with_progress(
-                                mc_simulator, 
-                                params, 
-                                mc_params['num_runs']
-                            )
-                            StateManager.set_simulation_result(sim_result)
-                        except Exception as e:
-                            ErrorHandler.show_error("Error in Monte Carlo simulation", str(e))
-                else:
-                    # Run single simulation
-                    with st.spinner("Running simulation..."):
-                        try:
-                            sim_result = simulation.run_simulation(params, num_runs=1)
-                            StateManager.set_simulation_result(sim_result)
-                        except Exception as e:
-                            ErrorHandler.show_error("Error in simulation", str(e))
-            
-            # Display simulation results if available
-            sim_result = StateManager.get_simulation_result()
-            if sim_result is not None:
-                enable_monte_carlo = StateManager.get_monte_carlo_enabled()
-                mc_params = StateManager.get_monte_carlo_params()
+                # Display stochastic simulation parameter controls
+                params = display_stochastic_parameter_controls()
                 
-                if enable_monte_carlo:
-                    # Display Monte Carlo results
-                    display_monte_carlo_results(
-                        sim_result, 
-                        show_confidence_intervals=mc_params['show_confidence_intervals'],
-                        show_percentiles=mc_params['show_percentiles']
-                    )
-                else:
-                    # Display single run results
-                    display_single_run_results(sim_result)
-            elif not StateManager.is_simulation_result_displayed():
-                # Initial run when app loads if no simulation has been run yet
-                with st.spinner("Running initial simulation..."):
-                    try:
-                        sim_result = simulation.run_simulation(params, num_runs=1)
+                # Display Monte Carlo controls
+                enable_monte_carlo, num_runs, show_confidence_intervals, show_percentiles = display_monte_carlo_controls()
+                
+                # Store parameters in session state
+                StateManager.set_simulation_params(params)
+                StateManager.set_monte_carlo_enabled(enable_monte_carlo)
+                StateManager.set_monte_carlo_params({
+                    "num_runs": num_runs,
+                    "show_confidence_intervals": show_confidence_intervals,
+                    "show_percentiles": show_percentiles
+                })
+                StateManager.set_simulation_type("stochastic")
+                
+                # Run button
+                if st.button("Run Stochastic Simulation"):
+                    # Get parameters from session state
+                    params = StateManager.get_simulation_params()
+                    enable_monte_carlo = StateManager.get_monte_carlo_enabled()
+                    mc_params = StateManager.get_monte_carlo_params()
+                    
+                    if enable_monte_carlo:
+                        # Run Monte Carlo simulation with progress bar
+                        with st.spinner(f"Running Monte Carlo simulation with {mc_params['num_runs']} runs..."):
+                            try:
+                                mc_simulator = MonteCarloSimulator(simulation)
+                                sim_result = mc_simulator.run_simulations(
+                                    params, 
+                                    num_runs=mc_params['num_runs']
+                                )
+                                StateManager.set_simulation_result(sim_result)
+                                StateManager.set_simulator(mc_simulator)
+                            except Exception as e:
+                                ErrorHandler.show_error("Error in Monte Carlo simulation", str(e))
+                    else:
+                        # Run single simulation
+                        with st.spinner("Running simulation..."):
+                            try:
+                                sim_result = simulation.run_simulation(params, num_runs=1, simulation_type="stochastic")
+                                StateManager.set_simulation_result(sim_result)
+                            except Exception as e:
+                                ErrorHandler.show_error("Error in simulation", str(e))
+                
+                # Display simulation results if available
+                sim_result = StateManager.get_simulation_result()
+                sim_type = StateManager.get_simulation_type()
+                
+                if sim_result is not None and sim_type == "stochastic":
+                    enable_monte_carlo = StateManager.get_monte_carlo_enabled()
+                    mc_params = StateManager.get_monte_carlo_params()
+                    
+                    if enable_monte_carlo:
+                        # Display Monte Carlo results
+                        display_monte_carlo_results(
+                            sim_result, 
+                            show_confidence_intervals=mc_params['show_confidence_intervals'],
+                            show_percentiles=mc_params['show_percentiles']
+                        )
+                    else:
+                        # Display single run results
                         display_single_run_results(sim_result)
-                        StateManager.set_simulation_result(sim_result)
-                    except Exception as e:
-                        ErrorHandler.show_error("Error in initial simulation", str(e))
+                elif not StateManager.is_simulation_result_displayed() and sim_type == "stochastic":
+                    # Initial run when app loads if no simulation has been run yet
+                    with st.spinner("Running initial stochastic simulation..."):
+                        try:
+                            sim_result = simulation.run_simulation(params, num_runs=1, simulation_type="stochastic")
+                            display_single_run_results(sim_result)
+                            StateManager.set_simulation_result(sim_result)
+                        except Exception as e:
+                            ErrorHandler.show_error("Error in initial simulation", str(e))
+            
+            with sim_tab_agent:
+                st.subheader("Agent-Based Tokenomics Model")
+                st.write("""
+                This model simulates tokenomics metrics using an agent-based approach.
+                It models the behavior of different types of token holders (traders, stakers, etc.)
+                and how their interactions affect the token economy.
+                """)
+                
+                # Display agent-based simulation parameter controls
+                agent_params = display_agent_based_parameter_controls()
+                
+                # Store parameters in session state
+                StateManager.set_agent_params(agent_params)
+                
+                # Run button
+                if st.button("Run Agent-Based Simulation"):
+                    # Get parameters from session state
+                    agent_params = StateManager.get_agent_params()
+                    
+                    # Run agent-based simulation
+                    with st.spinner("Running agent-based simulation..."):
+                        try:
+                            agent_result = simulation.run_simulation(agent_params, simulation_type="agent")
+                            StateManager.set_simulation_result(agent_result)
+                            StateManager.set_simulation_type("agent")
+                            StateManager.set_agent_data(simulation.agent_data)
+                        except Exception as e:
+                            ErrorHandler.show_error("Error in agent-based simulation", str(e))
+                
+                # Display agent-based simulation results if available
+                sim_result = StateManager.get_simulation_result()
+                sim_type = StateManager.get_simulation_type()
+                
+                if sim_result is not None and sim_type == "agent":
+                    # Get agent data
+                    agent_data = StateManager.get_agent_data()
+                    
+                    # Display agent-based results
+                    display_agent_based_results(sim_result, agent_data)
         else:
             st.info("Please upload and process a radCAD Inputs CSV in the 'Load Data' tab to run simulations.")
     

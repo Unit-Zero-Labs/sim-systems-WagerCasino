@@ -6,6 +6,8 @@ from radcad import Model, Simulation, Experiment
 from radcad.engine import Engine, Backend
 import streamlit as st
 
+from logic.agent_model import AgentBasedModel
+
 ########################################################
 ####### UNIT ZERO LABS TOKEN SIMULATION ENGINE #########
 ########################################################
@@ -13,7 +15,7 @@ import streamlit as st
 
 class TokenomicsSimulation:
     """
-    A class for running tokenomics simulations using radCAD.
+    A class for running tokenomics simulations using radCAD or agent-based modeling.
     """
     
     def __init__(self, data):
@@ -77,12 +79,17 @@ class TokenomicsSimulation:
             "token_supply": initial_total_supply,
             "circulating_supply": initial_circulating_supply,
             "staked_tokens": 0,  # Start with 0 staked tokens
+            "effective_circulating_supply": initial_circulating_supply,
             "liquidity_pool_tokens": initial_lp_tokens,
             "token_price": initial_token_price,
             "market_cap": initial_circulating_supply * initial_token_price,
             "staking_apr": initial_staking_apr,
             "time_step": 0
         }
+        
+        # Add date if available
+        if hasattr(self.data, "dates") and self.data.dates is not None and len(self.data.dates) > 0:
+            self.initial_state["date"] = self.data.dates[0]
         
         return self.initial_state
     
@@ -217,6 +224,22 @@ class TokenomicsSimulation:
         """
         return ("staked_tokens", prev_state["staked_tokens"] + policy_input["staking_delta"])
     
+    def s_update_effective_supply(self, params, substep, state_history, prev_state, policy_input):
+        """
+        State update function for effective circulating supply (excludes staked tokens).
+        
+        Args:
+            params: Simulation parameters
+            substep: Current substep
+            state_history: History of states
+            prev_state: Previous state
+            policy_input: Policy function outputs
+            
+        Returns:
+            New effective circulating supply value
+        """
+        return ("effective_circulating_supply", prev_state["circulating_supply"] - prev_state["staked_tokens"] - policy_input["staking_delta"])
+    
     def s_update_price(self, params, substep, state_history, prev_state, policy_input):
         """
         State update function for token price.
@@ -265,9 +288,28 @@ class TokenomicsSimulation:
         """
         return ("time_step", prev_state["time_step"] + 1)
     
-    def run_simulation(self, params: Dict[str, Any], num_runs: int = 1) -> Union[pd.DataFrame, Dict[str, Any]]:
+    def run_simulation(self, params: Dict[str, Any], num_runs: int = 1,
+                      simulation_type: str = "stochastic") -> Union[pd.DataFrame, Dict[str, Any]]:
         """
-        Run a radCAD simulation with the given parameters.
+        Run a simulation with the given parameters.
+        
+        Args:
+            params: Dictionary of simulation parameters
+            num_runs: Number of Monte Carlo runs (default: 1)
+            simulation_type: Type of simulation to run ("stochastic" or "agent")
+            
+        Returns:
+            If num_runs=1: DataFrame with simulation results
+            If num_runs>1: Dictionary with raw data and statistical measures (mean, std_dev, conf_intervals, percentiles)
+        """
+        if simulation_type == "agent":
+            return self.run_agent_simulation(params)
+        else:
+            return self.run_stochastic_simulation(params, num_runs)
+    
+    def run_stochastic_simulation(self, params: Dict[str, Any], num_runs: int = 1) -> Union[pd.DataFrame, Dict[str, Any]]:
+        """
+        Run a radCAD stochastic simulation with the given parameters.
         
         Args:
             params: Dictionary of simulation parameters
@@ -291,6 +333,7 @@ class TokenomicsSimulation:
                 'variables': {
                     'circulating_supply': self.s_update_supply,
                     'staked_tokens': self.s_update_staking,
+                    'effective_circulating_supply': self.s_update_effective_supply,
                     'token_price': self.s_update_price,
                     'market_cap': self.s_update_market_cap,
                     'time_step': self.s_update_time
@@ -340,10 +383,14 @@ class TokenomicsSimulation:
             
             # State variables to analyze
             state_vars = ['token_supply', 'circulating_supply', 'staked_tokens', 
-                          'token_price', 'market_cap', 'staking_apr']
+                          'effective_circulating_supply', 'token_price', 'market_cap', 'staking_apr']
             
             # For each state variable
             for var in state_vars:
+                # Skip if variable not in results
+                if var not in result_df.columns:
+                    continue
+                    
                 # Initialize DataFrames for statistics
                 processed_results['mean'][var] = pd.DataFrame(index=timesteps)
                 processed_results['std_dev'][var] = pd.DataFrame(index=timesteps)
@@ -373,11 +420,12 @@ class TokenomicsSimulation:
             
             # Add dates to the statistical results
             for var in state_vars:
-                date_index = [self.data.dates[i] if i < len(self.data.dates) else None for i in timesteps]
-                processed_results['mean'][var].index = date_index
-                processed_results['std_dev'][var].index = date_index
-                processed_results['conf_intervals'][var].index = date_index
-                processed_results['percentiles'][var].index = date_index
+                if var in processed_results['mean']:  # Only process variables that were found in the data
+                    date_index = [self.data.dates[i] if i < len(self.data.dates) else None for i in timesteps]
+                    processed_results['mean'][var].index = date_index
+                    processed_results['std_dev'][var].index = date_index
+                    processed_results['conf_intervals'][var].index = date_index
+                    processed_results['percentiles'][var].index = date_index
             
             return processed_results
         else:
@@ -389,13 +437,50 @@ class TokenomicsSimulation:
             
             return result_df
     
-    def run_scenario_comparison(self, scenarios: List[Dict[str, Any]], num_runs: int = 1) -> Dict[str, Any]:
+    def run_agent_simulation(self, params: Dict[str, Any]) -> pd.DataFrame:
+        """
+        Run an agent-based simulation with the given parameters.
+        
+        Args:
+            params: Dictionary of simulation parameters
+            
+        Returns:
+            DataFrame with simulation results
+        """
+        # Set up initial state
+        initial_state = self.setup_initial_state(params)
+        
+        # Create agent based model
+        abm = AgentBasedModel(initial_state, params)
+        
+        # Create agents
+        agent_counts = {
+            "random_trader": params.get("random_trader_count", 20),
+            "trend_follower": params.get("trend_follower_count", 15),
+            "staking_agent": params.get("staking_agent_count", 10)
+        }
+        abm.create_agents(agent_counts)
+        
+        # Run simulation
+        result_df = abm.run_simulation(self.timesteps)
+        
+        # Add agent data at the end
+        agent_data = abm.get_agent_data()
+        
+        # Store agent data as an auxiliary result
+        self.agent_data = agent_data
+        
+        return result_df
+    
+    def run_scenario_comparison(self, scenarios: List[Dict[str, Any]], num_runs: int = 1,
+                              simulation_type: str = "stochastic") -> Dict[str, Any]:
         """
         Run multiple simulations for scenario comparison.
         
         Args:
             scenarios: List of dictionaries, each containing a scenario name and parameters
             num_runs: Number of Monte Carlo runs for each scenario (default: 1)
+            simulation_type: Type of simulation to run ("stochastic" or "agent")
             
         Returns:
             Dictionary mapping scenario names to simulation results
@@ -407,7 +492,7 @@ class TokenomicsSimulation:
             params = scenario.get("params", {})
             
             # Run simulation for this scenario with specified number of runs
-            result = self.run_simulation(params, num_runs=num_runs)
+            result = self.run_simulation(params, num_runs=num_runs, simulation_type=simulation_type)
             
             # Store results
             results[name] = result
@@ -494,4 +579,4 @@ class TokenomicsSimulation:
             'percentiles': percentiles
         }
         
-        return dist_data 
+        return dist_data
