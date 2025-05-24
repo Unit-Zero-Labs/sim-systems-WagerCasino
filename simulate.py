@@ -8,6 +8,8 @@ from radcad.engine import Engine, Backend
 import streamlit as st
 
 from logic.agent_model import AgentBasedModel
+from logic.parameter_registry import parameter_registry
+from logic.policy_factory import create_policy_factory
 
 ########################################################
 ####### UNIT ZERO LABS TOKEN SIMULATION ENGINE #########
@@ -17,6 +19,9 @@ from logic.agent_model import AgentBasedModel
 class TokenomicsSimulation:
     """
     A class for running tokenomics simulations using radCAD or agent-based modeling.
+    Enhanced with dynamic policy creation based on available parameters.
+    
+    Supports both single-run (num_runs=1) and Monte Carlo analysis (num_runs>1) seamlessly.
     """
     
     def __init__(self, data):
@@ -31,9 +36,14 @@ class TokenomicsSimulation:
         self.params = {}
         self.timesteps = len(data.dates) if data.dates is not None else 60
         
+        # Initialize dynamic policy system
+        self.policy_factory = create_policy_factory(parameter_registry)
+        self.dynamic_policies = {}
+        self.consumed_params = []
+        
     def setup_initial_state(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Set up the initial state for the simulation.
+        Set up the initial state for the simulation with enhanced state variables.
         
         Args:
             params: Dictionary of simulation parameters
@@ -56,14 +66,17 @@ class TokenomicsSimulation:
         initial_circulating_supply = 0
         if not self.data.vesting_cumulative.empty:
             if "Liquidity Pool" in self.data.vesting_cumulative.index:
-                initial_circulating_supply = self.data.vesting_cumulative.drop("Liquidity Pool", errors='ignore').sum().iloc[0]
+                circulating_sum = self.data.vesting_cumulative.drop("Liquidity Pool", errors='ignore').sum()
+                initial_circulating_supply = circulating_sum.iloc[0] if len(circulating_sum) > 0 else 0
             else:
-                initial_circulating_supply = self.data.vesting_cumulative.sum().iloc[0]
+                total_sum = self.data.vesting_cumulative.sum()
+                initial_circulating_supply = total_sum.iloc[0] if len(total_sum) > 0 else 0
         
         # Get initial liquidity pool tokens
         initial_lp_tokens = 0
         if not self.data.vesting_cumulative.empty and "Liquidity Pool" in self.data.vesting_cumulative.index:
-            initial_lp_tokens = self.data.vesting_cumulative.loc["Liquidity Pool"].iloc[0]
+            lp_row = self.data.vesting_cumulative.loc["Liquidity Pool"]
+            initial_lp_tokens = lp_row.iloc[0] if len(lp_row) > 0 else 0
         
         # Get initial token price
         initial_token_price = params.get("token_price", self.data.token_price)
@@ -72,10 +85,11 @@ class TokenomicsSimulation:
         
         # Get initial staking APR
         initial_staking_apr = 0.05  # Default value
-        if not self.data.staking_apr.empty:
-            initial_staking_apr = self.data.staking_apr.loc["Staking APR"].iloc[0]
+        if not self.data.staking_apr.empty and "Staking APR" in self.data.staking_apr.index:
+            apr_row = self.data.staking_apr.loc["Staking APR"]
+            initial_staking_apr = apr_row.iloc[0] if len(apr_row) > 0 else 0.05
         
-        # Set up the initial state
+        # Set up the enhanced initial state
         self.initial_state = {
             "token_supply": initial_total_supply,
             "circulating_supply": initial_circulating_supply,
@@ -85,7 +99,12 @@ class TokenomicsSimulation:
             "token_price": initial_token_price,
             "market_cap": initial_circulating_supply * initial_token_price,
             "staking_apr": initial_staking_apr,
-            "time_step": 0
+            "time_step": 0,
+            # Enhanced state variables for dynamic policies
+            "total_points_issued": 0,
+            "total_tokens_converted": 0,
+            "total_tokens_burned": 0,
+            "staking_rewards": 0
         }
         
         # Add date if available
@@ -94,209 +113,77 @@ class TokenomicsSimulation:
         
         return self.initial_state
     
-    def p_vesting_schedule(self, params, substep, state_history, prev_state):
+    def _discover_and_setup_policies(self, params: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """
-        Policy function for token vesting schedule.
+        Discover and setup dynamic policies based on available parameters.
         
         Args:
-            params: Simulation parameters
-            substep: Current substep
-            state_history: History of states
-            prev_state: Previous state
+            params: Dictionary of simulation parameters
             
         Returns:
-            Dictionary with newly vested tokens
+            Tuple of (policies, state_updates) dictionaries
         """
-        # Get current time step
-        time_step = prev_state["time_step"]
+        # Update parameter registry with current simulation parameters
+        self._update_parameter_registry(params)
         
-        # Calculate newly vested tokens based on vesting schedule
-        newly_vested = {}
-        for bucket in self.data.vesting_series.index:
-            if bucket != "SUM" and bucket != "Liquidity Pool":
-                if time_step < len(self.data.vesting_series.columns):
-                    newly_vested[bucket] = self.data.vesting_series.loc[bucket].iloc[time_step]
-                else:
-                    newly_vested[bucket] = 0
+        # Get dynamic policies from factory
+        self.dynamic_policies = self.policy_factory.discover_and_create_policies(self.data)
         
-        return {"newly_vested": sum(newly_vested.values())}
+        # Get corresponding state updates - only for state variables that exist
+        available_state_vars = [
+            'circulating_supply', 'staked_tokens', 'effective_circulating_supply', 
+            'token_price', 'market_cap', 'time_step', 'total_points_issued', 
+            'total_tokens_converted', 'total_tokens_burned', 'staking_rewards'
+        ]
+        
+        all_state_updates = self.policy_factory.create_state_updates()
+        state_updates = {k: v for k, v in all_state_updates.items() if k in available_state_vars}
+        
+        # Track which parameters are consumed
+        self.consumed_params = self._track_consumed_parameters()
+        
+        return self.dynamic_policies, state_updates
     
-    def p_staking(self, params, substep, state_history, prev_state):
-        """
-        Policy function for staking behavior.
-        
-        Args:
-            params: Simulation parameters
-            substep: Current substep
-            state_history: History of states
-            prev_state: Previous state
-            
-        Returns:
-            Dictionary with staking delta
-        """
-        # Get staking share parameter - use a default for agent-based simulations if not present
-        staking_share = params.get("staking_share", 0.5)  # Default to 50% if not specified
-        
-        # Get current circulating supply and staked tokens
-        circulating_supply = prev_state["circulating_supply"]
-        current_staked = prev_state["staked_tokens"]
-        
-        # Calculate target staked amount based on staking share
-        target_staked = circulating_supply * staking_share
-        
-        # Calculate staking delta (how many tokens to stake or unstake)
-        staking_delta = target_staked - current_staked
-        
-        # Apply constraints (can't stake more than available)
-        if staking_delta > 0:
-            max_new_staking = min(staking_delta, circulating_supply - current_staked)
-        else:
-            max_new_staking = staking_delta  # Unstaking
-        
-        return {"staking_delta": max_new_staking}
+    def _update_parameter_registry(self, params: Dict[str, Any]) -> None:
+        """Update parameter registry with current simulation parameters."""
+        # Make sure simulation parameters are in the registry
+        for param_name, param_value in params.items():
+            if param_name not in parameter_registry.parameters:
+                # Add missing parameters to registry
+                parameter_registry.register_parameters_from_csv({param_name: param_value})
     
-    def p_token_price(self, params, substep, state_history, prev_state):
-        """
-        Policy function for token price dynamics.
+    def _track_consumed_parameters(self) -> List[str]:
+        """Track which parameters are actually consumed by policies."""
+        consumed = []
         
-        Args:
-            params: Simulation parameters
-            substep: Current substep
-            state_history: History of states
-            prev_state: Previous state
-            
-        Returns:
-            Dictionary with price delta
-        """
-        # Get current price and market conditions
-        current_price = prev_state["token_price"]
-        market_volatility = params.get("market_volatility", 0.2)
+        # Add base parameters that are always consumed
+        base_consumed = [
+            "initial_total_supply", "Initial Total Supply of Tokens",
+            "token_price", "staking_share", "market_volatility"
+        ]
+        consumed.extend([p for p in base_consumed if p in self.data.static_params])
         
-        # Calculate staking ratio (staked tokens / circulating supply)
-        staked_ratio = prev_state["staked_tokens"] / prev_state["circulating_supply"] if prev_state["circulating_supply"] > 0 else 0
+        # Add parameters consumed by discovered policies
+        from logic.parameter_registry import ParameterCategory
         
-        # Price increases with higher staking ratio (basic model)
-        price_multiplier = 1 + (staked_ratio - 0.5) * 0.1
+        if "points_campaign" in self.dynamic_policies:
+            points_params = parameter_registry.get_parameters_by_category(ParameterCategory.POINTS_CAMPAIGN)
+            consumed.extend(points_params.keys())
         
-        # Add some randomness based on market volatility
-        random_factor = 1 + (random.random() - 0.5) * market_volatility
+        if "custom_utility" in self.dynamic_policies:
+            utility_params = parameter_registry.get_parameters_by_category(ParameterCategory.UTILITY)
+            consumed.extend(utility_params.keys())
         
-        # Calculate new price
-        new_price = current_price * price_multiplier * random_factor
-        
-        # Ensure price doesn't go below a minimum value
-        min_price = 0.001
-        new_price = max(new_price, min_price)
-        
-        return {"price_delta": new_price - current_price}
-    
-    def s_update_supply(self, params, substep, state_history, prev_state, policy_input):
-        """
-        State update function for circulating supply.
-        
-        Args:
-            params: Simulation parameters
-            substep: Current substep
-            state_history: History of states
-            prev_state: Previous state
-            policy_input: Policy function outputs
-            
-        Returns:
-            New circulating supply value
-        """
-        # Update circulating supply based on vesting
-        newly_vested_total = policy_input["newly_vested"]
-        
-        return ("circulating_supply", prev_state["circulating_supply"] + newly_vested_total)
-    
-    def s_update_staking(self, params, substep, state_history, prev_state, policy_input):
-        """
-        State update function for staked tokens.
-        
-        Args:
-            params: Simulation parameters
-            substep: Current substep
-            state_history: History of states
-            prev_state: Previous state
-            policy_input: Policy function outputs
-            
-        Returns:
-            New staked tokens value
-        """
-        return ("staked_tokens", prev_state["staked_tokens"] + policy_input["staking_delta"])
-    
-    def s_update_effective_supply(self, params, substep, state_history, prev_state, policy_input):
-        """
-        State update function for effective circulating supply (excludes staked tokens).
-        
-        Args:
-            params: Simulation parameters
-            substep: Current substep
-            state_history: History of states
-            prev_state: Previous state
-            policy_input: Policy function outputs
-            
-        Returns:
-            New effective circulating supply value
-        """
-        return ("effective_circulating_supply", prev_state["circulating_supply"] - prev_state["staked_tokens"] - policy_input["staking_delta"])
-    
-    def s_update_price(self, params, substep, state_history, prev_state, policy_input):
-        """
-        State update function for token price.
-        
-        Args:
-            params: Simulation parameters
-            substep: Current substep
-            state_history: History of states
-            prev_state: Previous state
-            policy_input: Policy function outputs
-            
-        Returns:
-            New token price value
-        """
-        return ("token_price", prev_state["token_price"] + policy_input["price_delta"])
-    
-    def s_update_market_cap(self, params, substep, state_history, prev_state, policy_input):
-        """
-        State update function for market cap.
-        
-        Args:
-            params: Simulation parameters
-            substep: Current substep
-            state_history: History of states
-            prev_state: Previous state
-            policy_input: Policy function outputs
-            
-        Returns:
-            New market cap value
-        """
-        return ("market_cap", prev_state["circulating_supply"] * prev_state["token_price"])
-    
-    def s_update_time(self, params, substep, state_history, prev_state, policy_input):
-        """
-        State update function for time step.
-        
-        Args:
-            params: Simulation parameters
-            substep: Current substep
-            state_history: History of states
-            prev_state: Previous state
-            policy_input: Policy function outputs
-            
-        Returns:
-            New time step value
-        """
-        return ("time_step", prev_state["time_step"] + 1)
+        return consumed
     
     def run_simulation(self, params: Dict[str, Any], num_runs: int = 1,
                       simulation_type: str = "stochastic") -> Union[pd.DataFrame, Dict[str, Any]]:
         """
-        Run a simulation with the given parameters.
+        Run a simulation with the given parameters using dynamic policy system.
         
         Args:
             params: Dictionary of simulation parameters
-            num_runs: Number of Monte Carlo runs (default: 1)
+            num_runs: Number of simulation runs (1 = single run, >1 = Monte Carlo analysis)
             simulation_type: Type of simulation to run ("stochastic" or "agent")
             
         Returns:
@@ -310,49 +197,58 @@ class TokenomicsSimulation:
     
     def run_stochastic_simulation(self, params: Dict[str, Any], num_runs: int = 1) -> Union[pd.DataFrame, Dict[str, Any]]:
         """
-        Run a radCAD stochastic simulation with the given parameters.
+        Run a stochastic simulation with the given parameters.
         
         Args:
             params: Dictionary of simulation parameters
-            num_runs: Number of Monte Carlo runs (default: 1)
+            num_runs: Number of simulation runs (1 = single run, >1 = Monte Carlo analysis)
             
         Returns:
             If num_runs=1: DataFrame with simulation results
-            If num_runs>1: Dictionary with raw data and statistical measures (mean, std_dev, conf_intervals, percentiles)
+            If num_runs>1: Dictionary with raw data and statistical measures
         """
         try:
-            # Set up initial state
-            initial_state = self.setup_initial_state(params)
+            # Input validation
+            if not params:
+                raise ValueError("Parameters dictionary cannot be empty")
             
-            # Define state update blocks
+            # Limit number of runs to prevent memory issues
+            safe_num_runs = min(num_runs, 200)  # Cap at 200 runs to avoid memory issues
+            if safe_num_runs < num_runs:
+                st.warning(f"Number of runs limited to {safe_num_runs} to prevent memory issues")
+                
+            # Validate and clean parameters
+            cleaned_params = self._validate_and_clean_parameters(params)
+            
+            # Set up initial state
+            initial_state = self.setup_initial_state(cleaned_params)
+            
+            # Check if we have valid initial state
+            if not initial_state:
+                raise ValueError("Failed to create valid initial state from parameters")
+            
+            # Discover and setup policies based on parameters
+            policies, state_updates = self._discover_and_setup_policies(cleaned_params)
+            
+            if not policies:
+                st.warning("No valid policies could be created from the provided parameters")
+                
+            # Track consumed parameters for validation
+            self.consumed_params = self._track_consumed_parameters()
+            
+            # Define state update blocks with dynamic policies
             state_update_blocks = [
                 {
-                    'policies': {
-                        'vesting': self.p_vesting_schedule,
-                        'staking': self.p_staking,
-                        'price': self.p_token_price
-                    },
-                    'variables': {
-                        'circulating_supply': self.s_update_supply,
-                        'staked_tokens': self.s_update_staking,
-                        'effective_circulating_supply': self.s_update_effective_supply,
-                        'token_price': self.s_update_price,
-                        'market_cap': self.s_update_market_cap,
-                        'time_step': self.s_update_time
-                    }
+                    'policies': policies,
+                    'variables': state_updates
                 }
             ]
             
-            # Limit number of runs to prevent memory issues
-            safe_num_runs = min(num_runs, 100)  # Cap at 100 runs to avoid memory issues
-            if safe_num_runs < num_runs:
-                st.warning(f"Number of runs limited to {safe_num_runs} to prevent memory issues")
-            
-            # Create model
+            # Create radCAD model with proper workflow
             model = Model(
                 initial_state=initial_state,
                 state_update_blocks=state_update_blocks,
-                params=params
+                params=cleaned_params
             )
             
             # Create simulation
@@ -370,95 +266,259 @@ class TokenomicsSimulation:
             
             # Process results based on number of runs
             if safe_num_runs > 1:
-                # Convert to DataFrame
-                result_df = pd.DataFrame(result)
+                processed_result = self._process_monte_carlo_results(result, safe_num_runs)
+            else:
+                processed_result = self._process_single_run_result(result)
                 
-                # Add dates
-                result_df['date'] = [self.data.dates[i] if i < len(self.data.dates) else None for i in result_df['timestep']]
+            # Force garbage collection
+            del model, simulation, experiment, result
+            gc.collect()
+            
+            return processed_result
                 
-                # Create a dictionary to store the processed results
-                processed_results = {
-                    'raw_data': result_df,
+        except Exception as e:
+            st.error(f"Error in stochastic simulation: {str(e)}")
+            # Return minimal result to prevent downstream errors
+            if num_runs == 1:
+                return pd.DataFrame({'timestep': [0], 'date': [None]})
+            else:
+                return {
+                    'raw_data': pd.DataFrame({'timestep': [0], 'date': [None]}),
                     'mean': {},
                     'std_dev': {},
                     'conf_intervals': {},
                     'percentiles': {}
                 }
-                
-                # Get unique timesteps
-                timesteps = sorted(result_df['timestep'].unique())
-                
-                # State variables to analyze
-                state_vars = ['token_supply', 'circulating_supply', 'staked_tokens', 
-                            'effective_circulating_supply', 'token_price', 'market_cap', 'staking_apr']
-                
-                # For each state variable
-                for var in state_vars:
-                    # Skip if variable not in results
-                    if var not in result_df.columns:
-                        continue
-                        
-                    # Initialize DataFrames for statistics
-                    processed_results['mean'][var] = pd.DataFrame(index=timesteps)
-                    processed_results['std_dev'][var] = pd.DataFrame(index=timesteps)
-                    processed_results['conf_intervals'][var] = pd.DataFrame(index=timesteps, columns=['lower', 'upper'])
-                    processed_results['percentiles'][var] = pd.DataFrame(index=timesteps, columns=[5, 25, 50, 75, 95])
+            
+        finally:
+            # Validate parameter usage
+            self._validate_parameter_coverage()
+    
+    def _validate_and_clean_parameters(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate and clean parameters to ensure they have proper values.
+        
+        Args:
+            params: Raw parameters dictionary
+            
+        Returns:
+            Dictionary with validated and cleaned parameters
+        """
+        cleaned_params = {}
+        
+        for param_name, param_value in params.items():
+            # Only set defaults for truly None/missing values
+            if param_value is None:
+                # Use specific defaults for critical parameters
+                if "conversion_rate" in param_name.lower():
+                    cleaned_params[param_name] = 0.5  # Default conversion rate
+                elif "price" in param_name.lower() and "token" in param_name.lower():
+                    cleaned_params[param_name] = 0.03  # Default token price
+                elif param_name in ["staking_share", "staking_utility_share"]:
+                    cleaned_params[param_name] = 0.75  # Default staking share
+                elif param_name == "market_volatility":
+                    cleaned_params[param_name] = 0.2  # Default volatility
+                else:
+                    # For other None parameters, set minimal defaults
+                    cleaned_params[param_name] = 0
                     
-                    # Calculate statistics for each timestep
-                    for t in timesteps:
-                        # Get data for this timestep across all runs
-                        timestep_data = result_df[(result_df['timestep'] == t)][var]
-                        
-                        if len(timestep_data) == 0:
-                            # Skip if no data for this timestep
-                            continue
-                        
-                        # Calculate mean and standard deviation
-                        mean_val = timestep_data.mean()
-                        std_val = timestep_data.std()
-                        
-                        # Calculate 95% confidence interval
-                        n_runs = len(timestep_data)
-                        conf_interval = 1.96 * std_val / np.sqrt(n_runs) if n_runs > 1 else std_val
-                        
-                        # Calculate percentiles
-                        try:
-                            percentiles = timestep_data.quantile([0.05, 0.25, 0.5, 0.75, 0.95]).values
-                        except Exception as e:
-                            # Fallback to mean value if percentile calculation fails
-                            percentiles = np.array([mean_val] * 5)
-                        
-                        # Store results
-                        processed_results['mean'][var].loc[t] = mean_val
-                        processed_results['std_dev'][var].loc[t] = std_val
-                        processed_results['conf_intervals'][var].loc[t] = [mean_val - conf_interval, mean_val + conf_interval]
-                        processed_results['percentiles'][var].loc[t] = percentiles
-                
-                # Add dates to the statistical results
-                for var in state_vars:
-                    if var in processed_results['mean']:  # Only process variables that were found in the data
-                        date_index = [self.data.dates[i] if i < len(self.data.dates) else None for i in timesteps]
-                        processed_results['mean'][var].index = date_index
-                        processed_results['std_dev'][var].index = date_index
-                        processed_results['conf_intervals'][var].index = date_index
-                        processed_results['percentiles'][var].index = date_index
-                
-                # Force garbage collection to free memory
-                gc.collect()
-                
-                return processed_results
+                # Only warn about important missing parameters
+                if "conversion_rate" in param_name.lower() or "price" in param_name.lower():
+                    st.warning(f"⚠️ Parameter '{param_name}' was missing, using default value: {cleaned_params[param_name]}")
             else:
-                # Original single-run processing
-                result_df = pd.DataFrame(result)
+                # Ensure numeric parameters are proper numbers
+                if isinstance(param_value, (int, float)):
+                    # Check for NaN or infinite values
+                    if pd.isna(param_value) or not np.isfinite(param_value):
+                        cleaned_params[param_name] = 0
+                        st.warning(f"⚠️ Parameter '{param_name}' had invalid value, using 0")
+                    else:
+                        cleaned_params[param_name] = float(param_value)
+                else:
+                    cleaned_params[param_name] = param_value
+        
+        # Only add truly missing critical parameters
+        critical_defaults = {
+            "staking_share": 0.75,
+            "token_price": 0.03,
+            "market_volatility": 0.2
+        }
+        
+        for param_name, default_value in critical_defaults.items():
+            if param_name not in cleaned_params:
+                cleaned_params[param_name] = default_value
+        
+        return cleaned_params
+    
+    def _process_monte_carlo_results(self, result, num_runs: int) -> Dict[str, Any]:
+        """Process Monte Carlo simulation results."""
+        try:
+            # Convert to DataFrame
+            result_df = pd.DataFrame(result)
+            
+            # Safely add dates with error handling
+            if hasattr(self.data, 'dates') and self.data.dates is not None and len(self.data.dates) > 0:
+                try:
+                    result_df['date'] = [
+                        self.data.dates[i] if i < len(self.data.dates) else None 
+                        for i in result_df['timestep']
+                    ]
+                except (IndexError, KeyError) as e:
+                    # Log warning but continue without dates
+                    st.warning(f"Could not add dates to simulation results: {str(e)}")
+                    result_df['date'] = None
+            else:
+                # No dates available, set to None
+                result_df['date'] = None
+            
+            # Create a dictionary to store the processed results
+            processed_results = {
+                'raw_data': result_df,
+                'mean': {},
+                'std_dev': {},
+                'conf_intervals': {},
+                'percentiles': {}
+            }
+            
+            # Get unique timesteps - ensure they exist
+            if 'timestep' not in result_df.columns:
+                st.error("Missing 'timestep' column in simulation results")
+                return processed_results
                 
-                # Add dates
-                result_df['date'] = [self.data.dates[i] if i < len(self.data.dates) else None for i in result_df['timestep']]
+            timesteps = sorted(result_df['timestep'].unique())
+            
+            # Enhanced state variables to analyze (including new dynamic ones)
+            state_vars = ['token_supply', 'circulating_supply', 'staked_tokens', 
+                        'effective_circulating_supply', 'token_price', 'market_cap', 
+                        'staking_apr', 'total_points_issued', 'total_tokens_converted', 
+                        'total_tokens_burned']
+            
+            # For each state variable
+            for var in state_vars:
+                # Skip if variable not in results
+                if var not in result_df.columns:
+                    continue
+                    
+                # Initialize DataFrames for statistics
+                processed_results['mean'][var] = pd.DataFrame(index=timesteps)
+                processed_results['std_dev'][var] = pd.DataFrame(index=timesteps)
+                processed_results['conf_intervals'][var] = pd.DataFrame(index=timesteps, columns=['lower', 'upper'])
+                processed_results['percentiles'][var] = pd.DataFrame(index=timesteps, columns=[5, 25, 50, 75, 95])
                 
-                return result_df
+                # Calculate statistics for each timestep
+                for t in timesteps:
+                    # Get data for this timestep across all runs
+                    timestep_data = result_df[(result_df['timestep'] == t)][var]
+                    
+                    if len(timestep_data) == 0:
+                        continue
+                    
+                    # Calculate mean and standard deviation
+                    mean_val = timestep_data.mean()
+                    std_val = timestep_data.std()
+                    
+                    # Calculate 95% confidence interval
+                    conf_interval = 1.96 * std_val / np.sqrt(num_runs) if num_runs > 1 else std_val
+                    
+                    # Calculate percentiles safely
+                    try:
+                        percentiles = timestep_data.quantile([0.05, 0.25, 0.5, 0.75, 0.95]).values
+                    except Exception:
+                        percentiles = np.array([mean_val] * 5)
+                    
+                    # Store results
+                    processed_results['mean'][var].loc[t] = mean_val
+                    processed_results['std_dev'][var].loc[t] = std_val
+                    processed_results['conf_intervals'][var].loc[t] = [mean_val - conf_interval, mean_val + conf_interval]
+                    processed_results['percentiles'][var].loc[t] = percentiles
+            
+            # Add dates to the statistical results safely
+            if 'date' in result_df.columns and result_df['date'].notna().any():
+                try:
+                    for var in state_vars:
+                        if var in processed_results['mean']:
+                            date_index = []
+                            valid_timesteps = []
+                            
+                            for i in timesteps:
+                                if i < len(self.data.dates):
+                                    date_index.append(self.data.dates[i])
+                                    valid_timesteps.append(i)
+                                else:
+                                    # Skip timesteps beyond available dates
+                                    break
+                            
+                            if len(date_index) > 0:
+                                # Only update if we have valid dates
+                                processed_results['mean'][var] = processed_results['mean'][var].loc[valid_timesteps]
+                                processed_results['mean'][var].index = date_index
+                                processed_results['std_dev'][var] = processed_results['std_dev'][var].loc[valid_timesteps]
+                                processed_results['std_dev'][var].index = date_index
+                                processed_results['conf_intervals'][var] = processed_results['conf_intervals'][var].loc[valid_timesteps]
+                                processed_results['conf_intervals'][var].index = date_index
+                                processed_results['percentiles'][var] = processed_results['percentiles'][var].loc[valid_timesteps]
+                                processed_results['percentiles'][var].index = date_index
+                except Exception as e:
+                    st.warning(f"Could not add dates to statistical results: {str(e)}")
+            
+            # Force garbage collection to free memory
+            gc.collect()
+            
+            return processed_results
+            
         except Exception as e:
-            ErrorHandler.log_error(e, "stochastic_simulation")
-            st.error(f"Error in stochastic simulation: {str(e)}")
-            raise
+            st.error(f"Error processing Monte Carlo results: {str(e)}")
+            return {
+                'raw_data': pd.DataFrame(),
+                'mean': {},
+                'std_dev': {},
+                'conf_intervals': {},
+                'percentiles': {}
+            }
+    
+    def _process_single_run_result(self, result) -> pd.DataFrame:
+        """Process single run simulation result."""
+        try:
+            result_df = pd.DataFrame(result)
+            
+            # Debug: Log what columns we actually have
+            if len(result_df.columns) > 0:
+                st.info(f"Simulation generated columns: {list(result_df.columns)}")
+            else:
+                st.warning("Simulation result DataFrame is empty or has no columns")
+            
+            # Safely add dates with error handling
+            if hasattr(self.data, 'dates') and self.data.dates is not None and len(self.data.dates) > 0:
+                try:
+                    result_df['date'] = [
+                        self.data.dates[i] if i < len(self.data.dates) else None 
+                        for i in result_df['timestep']
+                    ]
+                except (IndexError, KeyError) as e:
+                    # Log warning but continue without dates
+                    st.warning(f"Could not add dates to simulation results: {str(e)}")
+                    result_df['date'] = None
+            else:
+                # No dates available, set to None
+                result_df['date'] = None
+            
+            return result_df
+            
+        except Exception as e:
+            st.error(f"Error processing single run result: {str(e)}")
+            # Return a minimal DataFrame to prevent further errors
+            return pd.DataFrame({'timestep': [0], 'date': [None]})
+    
+    def _validate_parameter_coverage(self):
+        """Validate that parameters are being properly consumed."""
+        if parameter_registry.parameters:
+            unused, missing = parameter_registry.validate_parameter_coverage(self.consumed_params)
+            
+            if unused and len(unused) > 0:
+                # Only show warning for significant unused parameters
+                significant_unused = [p for p in unused if not any(skip in p.lower() for skip in ['comment', 'unit', 'step'])]
+                if significant_unused:
+                    st.warning(f"⚠️ Some parameters from your CSV are not being used: {', '.join(significant_unused[:3])}{'...' if len(significant_unused) > 3 else ''}")
     
     def run_agent_simulation(self, params: Dict[str, Any], num_runs: int = 1) -> Union[pd.DataFrame, Dict[str, Any]]:
         """
@@ -466,7 +526,7 @@ class TokenomicsSimulation:
         
         Args:
             params: Dictionary of simulation parameters
-            num_runs: Number of Monte Carlo runs (default: 1)
+            num_runs: Number of simulation runs (1 = single run, >1 = Monte Carlo analysis)
             
         Returns:
             If num_runs=1: DataFrame with simulation results
@@ -510,132 +570,106 @@ class TokenomicsSimulation:
                 # Initialize list to store all runs
                 all_runs = []
                 
-                # Generate unique seeds for reproducibility
-                seeds = [np.random.randint(0, 100000) for _ in range(safe_num_runs)]
-                
-                # Define a reasonable batch size to avoid memory issues
-                batch_size = 20
-                
-                # Run in batches
-                for batch_start in range(0, safe_num_runs, batch_size):
-                    batch_end = min(batch_start + batch_size, safe_num_runs)
-                    batch_seeds = seeds[batch_start:batch_end]
+                for run in range(safe_num_runs):
+                    # Set up initial state
+                    initial_state = self.setup_initial_state(params)
                     
-                    # Run each simulation in this batch with a different seed
-                    for run_idx, seed in enumerate(batch_seeds, start=batch_start):
-                        # Set seed for reproducibility
-                        np.random.seed(seed)
-                        random.seed(seed)
-                        
-                        # Set up initial state
-                        initial_state = self.setup_initial_state(params)
-                        
-                        # Create agent based model
-                        abm = AgentBasedModel(initial_state, params)
-                        
-                        # Create agents
-                        agent_counts = {
-                            "random_trader": params.get("random_trader_count", 20),
-                            "trend_follower": params.get("trend_follower_count", 15),
-                            "staking_agent": params.get("staking_agent_count", 10)
-                        }
-                        abm.create_agents(agent_counts)
-                        
-                        # Run simulation
-                        result_df = abm.run_simulation(self.timesteps)
-                        
-                        # Add run information
-                        result_df['run'] = run_idx
-                        result_df['seed'] = seed
-                        
-                        # Store this run
-                        all_runs.append(result_df)
-                        
-                        # If it's the last run, store agent data for visualization
-                        if run_idx == safe_num_runs - 1:
-                            self.agent_data = abm.get_agent_data()
+                    # Create agent based model
+                    abm = AgentBasedModel(initial_state, params)
                     
-                    # Force garbage collection after each batch
-                    gc.collect()
+                    # Create agents
+                    agent_counts = {
+                        "random_trader": params.get("random_trader_count", 20),
+                        "trend_follower": params.get("trend_follower_count", 15),
+                        "staking_agent": params.get("staking_agent_count", 10)
+                    }
+                    abm.create_agents(agent_counts)
+                    
+                    # Run simulation
+                    run_result = abm.run_simulation(self.timesteps)
+                    run_result['run'] = run
+                    all_runs.append(run_result)
                 
                 # Combine all runs
                 combined_df = pd.concat(all_runs, ignore_index=True)
                 
-                # Create a dictionary to store the processed results
-                processed_results = {
-                    'raw_data': combined_df,
-                    'mean': {},
-                    'std_dev': {},
-                    'conf_intervals': {},
-                    'percentiles': {}
-                }
-                
-                # Get unique timesteps
-                timesteps = sorted(combined_df['timestep'].unique())
-                
-                # State variables to analyze
-                state_vars = ['token_price', 'total_tokens', 'staked_tokens', 'market_cap', 'staking_apr', 'total_portfolio_value']
-                
-                # For each state variable
-                for var in state_vars:
-                    # Skip if variable not in results
-                    if var not in combined_df.columns:
-                        continue
-                        
-                    # Initialize DataFrames for statistics
-                    processed_results['mean'][var] = pd.DataFrame(index=timesteps)
-                    processed_results['std_dev'][var] = pd.DataFrame(index=timesteps)
-                    processed_results['conf_intervals'][var] = pd.DataFrame(index=timesteps, columns=['lower', 'upper'])
-                    processed_results['percentiles'][var] = pd.DataFrame(index=timesteps, columns=[5, 25, 50, 75, 95])
-                    
-                    # Calculate statistics for each timestep
-                    for t in timesteps:
-                        # Get data for this timestep across all runs
-                        timestep_data = combined_df[(combined_df['timestep'] == t)][var]
-                        
-                        if len(timestep_data) == 0:
-                            # Skip if no data for this timestep
-                            continue
-                        
-                        # Calculate mean and standard deviation
-                        mean_val = timestep_data.mean()
-                        std_val = timestep_data.std()
-                        
-                        # Calculate 95% confidence interval
-                        n_runs = len(timestep_data)
-                        conf_interval = 1.96 * std_val / np.sqrt(n_runs) if n_runs > 1 else std_val
-                        
-                        # Calculate percentiles
-                        try:
-                            percentiles = timestep_data.quantile([0.05, 0.25, 0.5, 0.75, 0.95]).values
-                        except Exception as e:
-                            # Fallback to mean value if percentile calculation fails
-                            percentiles = np.array([mean_val] * 5)
-                        
-                        # Store results
-                        processed_results['mean'][var].loc[t] = mean_val
-                        processed_results['std_dev'][var].loc[t] = std_val
-                        processed_results['conf_intervals'][var].loc[t] = [mean_val - conf_interval, mean_val + conf_interval]
-                        processed_results['percentiles'][var].loc[t] = percentiles
-                
-                # Add dates to the statistical results
-                for var in state_vars:
-                    if var in processed_results['mean']:  # Only process variables that were found in the data
-                        date_index = [self.data.dates[i] if i < len(self.data.dates) else None for i in timesteps]
-                        processed_results['mean'][var].index = date_index
-                        processed_results['std_dev'][var].index = date_index
-                        processed_results['conf_intervals'][var].index = date_index
-                        processed_results['percentiles'][var].index = date_index
-                
-                # Force garbage collection to free memory
-                gc.collect()
-                
-                return processed_results
+                # Process similar to stochastic Monte Carlo
+                return self._process_agent_monte_carlo_results(combined_df, safe_num_runs)
+            
         except Exception as e:
-            ErrorHandler.log_error(e, "agent_simulation")
             st.error(f"Error in agent-based simulation: {str(e)}")
             raise
-    
+
+    def _process_agent_monte_carlo_results(self, combined_df: pd.DataFrame, num_runs: int) -> Dict[str, Any]:
+        """Process Monte Carlo results for agent-based simulations."""
+        # Create a dictionary to store the processed results
+        processed_results = {
+            'raw_data': combined_df,
+            'mean': {},
+            'std_dev': {},
+            'conf_intervals': {},
+            'percentiles': {}
+        }
+        
+        # Get unique timesteps
+        timesteps = sorted(combined_df['timestep'].unique())
+        
+        # State variables to analyze for agent-based simulations
+        state_vars = ['token_price', 'total_tokens', 'staked_tokens', 'market_cap', 'staking_apr', 'total_portfolio_value']
+        
+        # For each state variable
+        for var in state_vars:
+            # Skip if variable not in results
+            if var not in combined_df.columns:
+                continue
+                
+            # Initialize DataFrames for statistics
+            processed_results['mean'][var] = pd.DataFrame(index=timesteps)
+            processed_results['std_dev'][var] = pd.DataFrame(index=timesteps)
+            processed_results['conf_intervals'][var] = pd.DataFrame(index=timesteps, columns=['lower', 'upper'])
+            processed_results['percentiles'][var] = pd.DataFrame(index=timesteps, columns=[5, 25, 50, 75, 95])
+            
+            # Calculate statistics for each timestep
+            for t in timesteps:
+                # Get data for this timestep across all runs
+                timestep_data = combined_df[(combined_df['timestep'] == t)][var]
+                
+                if len(timestep_data) == 0:
+                    continue
+                
+                # Calculate mean and standard deviation
+                mean_val = timestep_data.mean()
+                std_val = timestep_data.std()
+                
+                # Calculate 95% confidence interval
+                conf_interval = 1.96 * std_val / np.sqrt(num_runs) if num_runs > 1 else std_val
+                
+                # Calculate percentiles
+                try:
+                    percentiles = timestep_data.quantile([0.05, 0.25, 0.5, 0.75, 0.95]).values
+                except Exception:
+                    percentiles = np.array([mean_val] * 5)
+                
+                # Store results
+                processed_results['mean'][var].loc[t] = mean_val
+                processed_results['std_dev'][var].loc[t] = std_val
+                processed_results['conf_intervals'][var].loc[t] = [mean_val - conf_interval, mean_val + conf_interval]
+                processed_results['percentiles'][var].loc[t] = percentiles
+        
+        # Add dates to the statistical results
+        for var in state_vars:
+            if var in processed_results['mean']:
+                date_index = [self.data.dates[i] if i < len(self.data.dates) else None for i in timesteps]
+                processed_results['mean'][var].index = date_index
+                processed_results['std_dev'][var].index = date_index
+                processed_results['conf_intervals'][var].index = date_index
+                processed_results['percentiles'][var].index = date_index
+        
+        # Force garbage collection to free memory
+        gc.collect()
+        
+        return processed_results
+
     def run_scenario_comparison(self, scenarios: List[Dict[str, Any]], num_runs: int = 1,
                               simulation_type: str = "stochastic") -> Dict[str, Any]:
         """

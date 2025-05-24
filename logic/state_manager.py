@@ -1,14 +1,12 @@
 """
-State management for the Unit Zero Labs Tokenomics Engine.
-Provides utilities for managing Streamlit session state.
+State management for the Streamlit application.
 """
 
 import streamlit as st
-from typing import Any, Dict, Optional, List, Callable
 import pandas as pd
-
+from typing import Dict, Any, Optional, Callable, List
 from tokenomics_data import TokenomicsData
-from utils.config import get_simulation_defaults, get_monte_carlo_defaults, get_agent_defaults
+from utils.config import get_simulation_defaults, get_agent_defaults
 
 
 class StateManager:
@@ -38,18 +36,6 @@ class StateManager:
         agent_defaults = get_agent_defaults()
         if 'agent_params' not in st.session_state:
             st.session_state.agent_params = agent_defaults
-        
-        # Monte Carlo parameters state
-        mc_defaults = get_monte_carlo_defaults()
-        if 'enable_monte_carlo' not in st.session_state:
-            st.session_state.enable_monte_carlo = False
-        
-        if 'monte_carlo_params' not in st.session_state:
-            st.session_state.monte_carlo_params = {
-                'num_runs': mc_defaults['num_runs'],
-                'show_confidence_intervals': mc_defaults['show_confidence_intervals'],
-                'show_percentiles': mc_defaults['show_percentiles']
-            }
         
         # Simulation results state
         if 'sim_result' not in st.session_state:
@@ -144,56 +130,12 @@ class StateManager:
     @staticmethod
     def set_agent_params(params: Dict[str, Any]) -> None:
         """
-        Set the agent-based simulation parameters in session state.
+        Set the agent parameters in session state.
         
         Args:
             params: Dictionary of agent parameters
         """
         st.session_state.agent_params = params
-    
-    @staticmethod
-    def get_monte_carlo_enabled() -> bool:
-        """
-        Check if Monte Carlo simulation is enabled.
-        
-        Returns:
-            Boolean indicating if Monte Carlo is enabled
-        """
-        return st.session_state.get('enable_monte_carlo', False)
-    
-    @staticmethod
-    def set_monte_carlo_enabled(enabled: bool) -> None:
-        """
-        Set the Monte Carlo simulation enabled flag.
-        
-        Args:
-            enabled: Boolean indicating if Monte Carlo should be enabled
-        """
-        st.session_state.enable_monte_carlo = enabled
-    
-    @staticmethod
-    def get_monte_carlo_params() -> Dict[str, Any]:
-        """
-        Get the Monte Carlo parameters from session state.
-        
-        Returns:
-            Dictionary of Monte Carlo parameters
-        """
-        return st.session_state.get('monte_carlo_params', {
-            'num_runs': get_monte_carlo_defaults()['num_runs'],
-            'show_confidence_intervals': get_monte_carlo_defaults()['show_confidence_intervals'],
-            'show_percentiles': get_monte_carlo_defaults()['show_percentiles']
-        })
-    
-    @staticmethod
-    def set_monte_carlo_params(params: Dict[str, Any]) -> None:
-        """
-        Set the Monte Carlo parameters in session state.
-        
-        Args:
-            params: Dictionary of Monte Carlo parameters
-        """
-        st.session_state.monte_carlo_params = params
     
     @staticmethod
     def get_simulation_result() -> Any:
@@ -304,19 +246,6 @@ class StateManager:
         
         # Reset simulation type to default
         st.session_state.simulation_type = "stochastic"
-        
-        # Reset Monte Carlo settings to defaults
-        mc_defaults = get_monte_carlo_defaults()
-        st.session_state.enable_monte_carlo = False
-        st.session_state.monte_carlo_params = {
-            'num_runs': mc_defaults['num_runs'],
-            'show_confidence_intervals': mc_defaults['show_confidence_intervals'],
-            'show_percentiles': mc_defaults['show_percentiles']
-        }
-        
-        # Reset simulation params to defaults (optional - uncomment if needed)
-        # st.session_state.simulation_params = get_simulation_defaults()
-        # st.session_state.agent_params = get_agent_defaults()
         
         # Force garbage collection to free memory
         import gc

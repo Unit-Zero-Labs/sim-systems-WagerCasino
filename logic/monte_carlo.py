@@ -13,6 +13,7 @@ from datetime import datetime
 import multiprocessing
 import math
 import gc
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from utils.error_handler import ErrorHandler
 
@@ -117,123 +118,136 @@ class MonteCarloSimulator:
         progress_callback: Optional[callable] = None
     ) -> Dict[str, Any]:
         """
-        Run Monte Carlo simulations in parallel.
+        Run multiple simulations in parallel with progress tracking.
         
         Args:
             params: Simulation parameters
-            num_runs: Number of simulation runs
-            progress_callback: Optional callback function for progress updates
+            num_runs: Number of parallel runs
+            progress_callback: Optional callback for progress updates
             
         Returns:
-            Dictionary with Monte Carlo simulation results
+            Dictionary with Monte Carlo results
         """
-        start_time = time.time()
-        
-        # Create empty results list
-        raw_results = []
-        processed_results = None
-        
-        # Create batch processing for larger run counts
-        batch_size = min(self.max_batch_size, num_runs)
-        num_batches = math.ceil(num_runs / batch_size)
-        
-        # Keep track of completion
-        completed = 0
-        
         try:
-            # Process each batch
-            for batch_idx in range(num_batches):
-                # Calculate start and end indices for this batch
-                start_idx = batch_idx * batch_size
-                end_idx = min(start_idx + batch_size, num_runs)
-                batch_runs = end_idx - start_idx
+            # Prepare simulation settings for each run
+            simulation_settings = []
+            for run_num in range(num_runs):
+                # Create a copy of params with run-specific random seed
+                run_params = params.copy()
+                run_params['random_seed'] = run_num  # Ensure different seeds for each run
                 
-                # Create a list of simulation settings for this batch with different random seeds
-                simulation_settings = [
-                    {"params": params, "run_num": i + start_idx, "seed": np.random.randint(0, 100000)}
-                    for i in range(batch_runs)
-                ]
+                simulation_settings.append({
+                    'params': run_params,
+                    'run_num': run_num + 1,
+                    'engine': self.simulation_engine
+                })
+            
+            # Use context manager to suppress warnings in worker processes
+            import warnings
+            warnings.filterwarnings('ignore', category=UserWarning, message='.*ScriptRunContext.*')
+            
+            # Run simulations in parallel with reduced workers to avoid context issues
+            max_workers = min(4, num_runs)  # Limit workers to reduce threading issues
+            raw_results = []
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all simulation tasks
+                future_to_run = {
+                    executor.submit(self._run_single_simulation_safe, settings): settings['run_num']
+                    for settings in simulation_settings
+                }
                 
-                # Use a ThreadPoolExecutor for parallelization
-                # ThreadPoolExecutor shares memory space, so it should be more efficient
-                with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                    # Submit all simulation runs for this batch
-                    future_to_run = {
-                        executor.submit(self._run_single_simulation, setting): i 
-                        for i, setting in enumerate(simulation_settings)
-                    }
-                    
-                    # Process results as they complete
-                    for future in concurrent.futures.as_completed(future_to_run):
-                        run_idx = future_to_run[future]
-                        try:
-                            result = future.result()
-                            if result is not None:
-                                raw_results.append(result)
-                        except Exception as e:
-                            ErrorHandler.log_error(e, f"Monte Carlo run {run_idx + start_idx}")
+                # Process completed simulations
+                completed = 0
+                for future in as_completed(future_to_run):
+                    run_num = future_to_run[future]
+                    try:
+                        result = future.result()
+                        if result is not None:
+                            # Add run identifier to the result
+                            result['run'] = run_num
+                            raw_results.append(result)
+                        else:
+                            st.warning(f"Run {run_num} returned no results")
                         
-                        # Update progress
                         completed += 1
                         if progress_callback:
                             progress_callback(completed / num_runs)
-                
-                # Force garbage collection after each batch
-                executor.shutdown(wait=True)
-                gc.collect()
+                            
+                    except Exception as e:
+                        st.warning(f"Run {run_num} failed: {str(e)}")
+                        completed += 1
+                        if progress_callback:
+                            progress_callback(completed / num_runs)
             
-            # Process the raw results
+            # Process and return results
             if raw_results:
-                processed_results = self._process_simulation_results(raw_results)
+                return self._process_simulation_results(raw_results)
             else:
-                raise ValueError("No successful simulation runs were completed")
-            
+                st.error("All simulation runs failed. Check parameters and try again.")
+                return self._get_empty_results()
+                
         except Exception as e:
-            ErrorHandler.log_error(e, "Monte Carlo simulation")
-            raise
-        
-        end_time = time.time()
-        execution_time = end_time - start_time
-        
-        if processed_results:
-            processed_results['execution_info'] = {
-                'num_runs': len(raw_results),  # Use actual completed runs
-                'execution_time': execution_time,
-                'runs_per_second': len(raw_results) / execution_time if execution_time > 0 else 0,
-                'parallel_workers': self.max_workers
-            }
-        
-        return processed_results
+            st.error(f"Error in parallel simulation execution: {str(e)}")
+            return self._get_empty_results()
     
-    def _run_single_simulation(self, settings: Dict[str, Any]) -> Optional[pd.DataFrame]:
+    def _run_single_simulation_safe(self, settings: Dict[str, Any]) -> Optional[pd.DataFrame]:
         """
-        Run a single simulation with the given settings.
+        Run a single simulation with enhanced error handling and context management.
         
         Args:
-            settings: Dictionary containing simulation parameters and run info
+            settings: Dictionary with simulation parameters and metadata
             
         Returns:
-            DataFrame with simulation results or None if an error occurred
+            DataFrame with simulation results or None if failed
         """
-        params = settings["params"]
-        run_num = settings["run_num"]
-        seed = settings["seed"]
-        
         try:
-            # Set random seed for this run
-            np.random.seed(seed)
+            # Suppress Streamlit warnings in worker threads
+            import warnings
+            import logging
             
-            # Run the simulation
-            result = self.simulation_engine.run_simulation(params, num_runs=1)
+            # Temporarily reduce logging level to reduce noise
+            streamlit_logger = logging.getLogger('streamlit')
+            original_level = streamlit_logger.level
+            streamlit_logger.setLevel(logging.ERROR)
             
-            # Add run information to the result
-            result['run'] = run_num
-            result['seed'] = seed
+            # Suppress specific warnings
+            warnings.filterwarnings('ignore', category=UserWarning, message='.*ScriptRunContext.*')
             
-            return result
+            # Extract settings
+            params = settings['params']
+            run_num = settings['run_num']
+            engine = settings['engine']
+            
+            # Run the actual simulation
+            result = engine.run_stochastic_simulation(params, num_runs=1)
+            
+            # Restore logging level
+            streamlit_logger.setLevel(original_level)
+            
+            # Ensure result is a DataFrame
+            if isinstance(result, dict) and 'raw_data' in result:
+                return result['raw_data']
+            elif isinstance(result, pd.DataFrame):
+                return result
+            else:
+                return None
+                
         except Exception as e:
-            ErrorHandler.log_error(e, f"Single simulation run {run_num}")
+            # Only log critical errors, not context warnings
+            if "ScriptRunContext" not in str(e):
+                ErrorHandler.log_error(e, f"Single simulation run {settings.get('run_num', 'unknown')}")
             return None
+    
+    def _get_empty_results(self) -> Dict[str, Any]:
+        """Return empty results structure to prevent downstream errors."""
+        return {
+            'raw_data': pd.DataFrame(),
+            'mean': {},
+            'std_dev': {},
+            'conf_intervals': {},
+            'percentiles': {}
+        }
     
     def _process_simulation_results(self, raw_results: List[pd.DataFrame]) -> Dict[str, Any]:
         """
@@ -312,32 +326,42 @@ class MonteCarloSimulator:
                 processed_results['percentiles'][var].loc[t] = percentiles
         
         # Add dates to the statistical results
-        if 'date' in raw_data.columns:
+        if 'date' in raw_data.columns and raw_data['date'].notna().any():
+            # Create mapping of timesteps to dates
             dates_by_timestep = {}
             for t in timesteps:
                 # Make sure there's data for this timestep
                 timestep_rows = raw_data[raw_data['timestep'] == t]
                 if len(timestep_rows) > 0:
                     # Get the date for this timestep (same across all runs)
-                    date = timestep_rows['date'].iloc[0]
-                    dates_by_timestep[t] = date
-                else:
-                    dates_by_timestep[t] = None
+                    date_value = timestep_rows['date'].iloc[0]
+                    if pd.notna(date_value):  # Only add non-null dates
+                        dates_by_timestep[t] = date_value
             
-            # Replace timestep indices with dates
-            for var in state_vars:
-                if var in processed_results['mean']:  # Only process variables that were found in the data
-                    date_index = [dates_by_timestep[t] for t in timesteps if t in dates_by_timestep]
-                    if len(date_index) > 0:
-                        valid_timestamps = [t for t in timesteps if t in dates_by_timestep]
-                        processed_results['mean'][var] = processed_results['mean'][var].loc[valid_timestamps]
-                        processed_results['mean'][var].index = date_index
-                        processed_results['std_dev'][var] = processed_results['std_dev'][var].loc[valid_timestamps]
-                        processed_results['std_dev'][var].index = date_index
-                        processed_results['conf_intervals'][var] = processed_results['conf_intervals'][var].loc[valid_timestamps]
-                        processed_results['conf_intervals'][var].index = date_index
-                        processed_results['percentiles'][var] = processed_results['percentiles'][var].loc[valid_timestamps]
-                        processed_results['percentiles'][var].index = date_index
+            # Replace timestep indices with dates where available
+            try:
+                for var in state_vars:
+                    if var in processed_results['mean']:  # Only process variables that were found in the data
+                        # Create lists of valid timesteps and corresponding dates
+                        valid_timesteps = [t for t in timesteps if t in dates_by_timestep]
+                        date_index = [dates_by_timestep[t] for t in valid_timesteps]
+                        
+                        if len(date_index) > 0:
+                            # Filter DataFrames to only include timesteps with valid dates
+                            processed_results['mean'][var] = processed_results['mean'][var].loc[valid_timesteps]
+                            processed_results['mean'][var].index = date_index
+                            
+                            processed_results['std_dev'][var] = processed_results['std_dev'][var].loc[valid_timesteps]
+                            processed_results['std_dev'][var].index = date_index
+                            
+                            processed_results['conf_intervals'][var] = processed_results['conf_intervals'][var].loc[valid_timesteps]
+                            processed_results['conf_intervals'][var].index = date_index
+                            
+                            processed_results['percentiles'][var] = processed_results['percentiles'][var].loc[valid_timesteps]
+                            processed_results['percentiles'][var].index = date_index
+            except Exception as e:
+                # If date processing fails, continue with timestep indices
+                st.warning(f"Could not add dates to Monte Carlo results: {str(e)}")
         
         return processed_results
     

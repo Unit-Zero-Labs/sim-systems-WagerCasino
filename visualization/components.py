@@ -331,82 +331,156 @@ def display_single_run_results(sim_result: pd.DataFrame) -> None:
     Args:
         sim_result: DataFrame with simulation results
     """
-    # Create tabs for different metrics
-    metric_tabs = st.tabs(["Token Supply", "Token Price", "Market Cap", "Staking"])
+    # Validate that we have a valid DataFrame
+    if sim_result is None or len(sim_result) == 0:
+        st.error("No simulation results to display. Please try running the simulation again.")
+        return
     
-    with metric_tabs[0]:
-        # Plot the token supply results
-        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-        fig = plot_token_supply_simulation(sim_result)
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Display the simulation results
-        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-        st.subheader("Supply Results")
-        
-        # Make sure we display the token_supply from the simulation result
-        st.write(f"Initial Total Supply: {sim_result['token_supply'].iloc[0]:,.0f} tokens")
-        st.write(f"Initial Circulating Supply: {sim_result['circulating_supply'].iloc[0]:,.0f} tokens")
-        st.write(f"Final Circulating Supply: {sim_result['circulating_supply'].iloc[-1]:,.0f} tokens")
-        
-        # Calculate change only if initial is not zero
-        if sim_result['circulating_supply'].iloc[0] > 0:
-            change_pct = (sim_result['circulating_supply'].iloc[-1] / sim_result['circulating_supply'].iloc[0] - 1) * 100
-            st.write(f"Change: {(sim_result['circulating_supply'].iloc[-1] - sim_result['circulating_supply'].iloc[0]):,.0f} tokens ({change_pct:.2f}%)")
-        else:
-            st.write(f"Change: {(sim_result['circulating_supply'].iloc[-1] - sim_result['circulating_supply'].iloc[0]):,.0f} tokens (N/A%)")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
+    # Check which columns are available
+    required_columns = ['token_supply', 'circulating_supply', 'token_price', 'market_cap', 'staked_tokens']
+    available_columns = [col for col in required_columns if col in sim_result.columns]
+    missing_columns = [col for col in required_columns if col not in sim_result.columns]
     
-    with metric_tabs[1]:
-        # Plot the token price results
-        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-        fig = plot_token_price_simulation(sim_result)
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Display the simulation results
-        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-        st.subheader("Price Results")
-        st.write(f"Initial Price: ${sim_result['token_price'].iloc[0]:.5f}")
-        st.write(f"Final Price: ${sim_result['token_price'].iloc[-1]:.5f}")
-        st.write(f"Change: ${(sim_result['token_price'].iloc[-1] - sim_result['token_price'].iloc[0]):.5f} ({(sim_result['token_price'].iloc[-1] / sim_result['token_price'].iloc[0] - 1) * 100:.2f}%)")
-        st.markdown('</div>', unsafe_allow_html=True)
+    if missing_columns:
+        st.warning(f"Some expected columns are missing from simulation results: {', '.join(missing_columns)}")
     
-    with metric_tabs[2]:
-        # Plot the market cap results
-        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-        fig = plot_market_cap_simulation(sim_result)
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Display the simulation results
-        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-        st.subheader("Market Cap Results")
-        st.write(f"Initial Market Cap: ${sim_result['market_cap'].iloc[0]:,.2f}")
-        st.write(f"Final Market Cap: ${sim_result['market_cap'].iloc[-1]:,.2f}")
-        st.write(f"Change: ${(sim_result['market_cap'].iloc[-1] - sim_result['market_cap'].iloc[0]):,.2f} ({(sim_result['market_cap'].iloc[-1] / sim_result['market_cap'].iloc[0] - 1) * 100:.2f}%)")
-        st.markdown('</div>', unsafe_allow_html=True)
+    if not available_columns:
+        st.error("No recognizable columns found in simulation results.")
+        return
     
-    with metric_tabs[3]:
-        # Plot the staking results
-        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-        fig = plot_staking_simulation(sim_result)
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Display the simulation results
-        st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-        st.subheader("Staking Results")
-        if len(sim_result) > 1:
-            st.write(f"Initial Staked Tokens: {sim_result['staked_tokens'].iloc[0]:,.0f} tokens")
-            st.write(f"Final Staked Tokens: {sim_result['staked_tokens'].iloc[-1]:,.0f} tokens")
-            if sim_result['staked_tokens'].iloc[0] > 0:
-                st.write(f"Change: {(sim_result['staked_tokens'].iloc[-1] - sim_result['staked_tokens'].iloc[0]):,.0f} tokens ({(sim_result['staked_tokens'].iloc[-1] / sim_result['staked_tokens'].iloc[0] - 1) * 100:.2f}%)")
-            else:
-                st.write(f"Change: {(sim_result['staked_tokens'].iloc[-1] - sim_result['staked_tokens'].iloc[0]):,.0f} tokens (N/A%)")
-        st.markdown('</div>', unsafe_allow_html=True)
+    # Create tabs for different metrics - only for available columns
+    tab_names = []
+    if 'circulating_supply' in available_columns or 'token_supply' in available_columns:
+        tab_names.append("Token Supply")
+    if 'token_price' in available_columns:
+        tab_names.append("Token Price")
+    if 'market_cap' in available_columns:
+        tab_names.append("Market Cap")
+    if 'staked_tokens' in available_columns:
+        tab_names.append("Staking")
+    
+    if not tab_names:
+        st.error("No displayable metrics found in simulation results.")
+        return
+    
+    metric_tabs = st.tabs(tab_names)
+    
+    tab_index = 0
+    
+    # Token Supply Tab
+    if 'circulating_supply' in available_columns or 'token_supply' in available_columns:
+        with metric_tabs[tab_index]:
+            # Plot the token supply results
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            try:
+                fig = plot_token_supply_simulation(sim_result)
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Error plotting token supply: {str(e)}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Display the simulation results
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            st.subheader("Supply Results")
+            
+            try:
+                # Check if columns exist before accessing
+                if 'token_supply' in sim_result.columns:
+                    st.write(f"Initial Total Supply: {sim_result['token_supply'].iloc[0]:,.0f} tokens")
+                
+                if 'circulating_supply' in sim_result.columns:
+                    st.write(f"Initial Circulating Supply: {sim_result['circulating_supply'].iloc[0]:,.0f} tokens")
+                    st.write(f"Final Circulating Supply: {sim_result['circulating_supply'].iloc[-1]:,.0f} tokens")
+                    
+                    # Calculate change only if initial is not zero
+                    if sim_result['circulating_supply'].iloc[0] > 0:
+                        change_pct = (sim_result['circulating_supply'].iloc[-1] / sim_result['circulating_supply'].iloc[0] - 1) * 100
+                        st.write(f"Change: {(sim_result['circulating_supply'].iloc[-1] - sim_result['circulating_supply'].iloc[0]):,.0f} tokens ({change_pct:.2f}%)")
+                    else:
+                        st.write(f"Change: {(sim_result['circulating_supply'].iloc[-1] - sim_result['circulating_supply'].iloc[0]):,.0f} tokens (N/A%)")
+            except Exception as e:
+                st.error(f"Error displaying supply metrics: {str(e)}")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+        tab_index += 1
+    
+    # Token Price Tab
+    if 'token_price' in available_columns:
+        with metric_tabs[tab_index]:
+            # Plot the token price results
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            try:
+                fig = plot_token_price_simulation(sim_result)
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Error plotting token price: {str(e)}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Display the simulation results
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            st.subheader("Price Results")
+            try:
+                if 'token_price' in sim_result.columns:
+                    st.write(f"Initial Price: ${sim_result['token_price'].iloc[0]:.5f}")
+                    st.write(f"Final Price: ${sim_result['token_price'].iloc[-1]:.5f}")
+                    st.write(f"Change: ${(sim_result['token_price'].iloc[-1] - sim_result['token_price'].iloc[0]):.5f} ({(sim_result['token_price'].iloc[-1] / sim_result['token_price'].iloc[0] - 1) * 100:.2f}%)")
+                else:
+                    st.write("Token price data not available")
+            except Exception as e:
+                st.error(f"Error displaying price metrics: {str(e)}")
+            st.markdown('</div>', unsafe_allow_html=True)
+        tab_index += 1
+    
+    # Market Cap Tab
+    if 'market_cap' in available_columns:
+        with metric_tabs[tab_index]:
+            # Plot the market cap results
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            try:
+                fig = plot_market_cap_simulation(sim_result)
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Error plotting market cap: {str(e)}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Display the simulation results
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            st.subheader("Market Cap Results")
+            try:
+                st.write(f"Initial Market Cap: ${sim_result['market_cap'].iloc[0]:,.2f}")
+                st.write(f"Final Market Cap: ${sim_result['market_cap'].iloc[-1]:,.2f}")
+                st.write(f"Change: ${(sim_result['market_cap'].iloc[-1] - sim_result['market_cap'].iloc[0]):,.2f} ({(sim_result['market_cap'].iloc[-1] / sim_result['market_cap'].iloc[0] - 1) * 100:.2f}%)")
+            except Exception as e:
+                st.error(f"Error displaying market cap metrics: {str(e)}")
+            st.markdown('</div>', unsafe_allow_html=True)
+        tab_index += 1
+    
+    # Staking Tab
+    if 'staked_tokens' in available_columns:
+        with metric_tabs[tab_index]:
+            # Plot the staking results
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            try:
+                fig = plot_staking_simulation(sim_result)
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Error plotting staking: {str(e)}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Display the simulation results
+            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
+            st.subheader("Staking Results")
+            try:
+                if len(sim_result) > 1:
+                    st.write(f"Initial Staked Tokens: {sim_result['staked_tokens'].iloc[0]:,.0f} tokens")
+                    st.write(f"Final Staked Tokens: {sim_result['staked_tokens'].iloc[-1]:,.0f} tokens")
+                    if sim_result['staked_tokens'].iloc[0] > 0:
+                        st.write(f"Change: {(sim_result['staked_tokens'].iloc[-1] - sim_result['staked_tokens'].iloc[0]):,.0f} tokens ({(sim_result['staked_tokens'].iloc[-1] / sim_result['staked_tokens'].iloc[0] - 1) * 100:.2f}%)")
+                    else:
+                        st.write(f"Change: {(sim_result['staked_tokens'].iloc[-1] - sim_result['staked_tokens'].iloc[0]):,.0f} tokens (N/A%)")
+            except Exception as e:
+                st.error(f"Error displaying staking metrics: {str(e)}")
+            st.markdown('</div>', unsafe_allow_html=True)
 
 
 def display_monte_carlo_results(
@@ -437,13 +511,17 @@ def display_monte_carlo_results(
         with variable_tabs[0]:
             st.markdown('<div class="plot-container">', unsafe_allow_html=True)
             try:
-                fig = plot_monte_carlo_results(
-                    mc_results, 
-                    "circulating_supply", 
-                    show_confidence_intervals=show_confidence_intervals,
-                    show_percentiles=show_percentiles
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                # Check if circulating_supply data exists
+                if 'circulating_supply' in mc_results.get('mean', {}):
+                    fig = plot_monte_carlo_results(
+                        mc_results, 
+                        "circulating_supply", 
+                        show_confidence_intervals=show_confidence_intervals,
+                        show_percentiles=show_percentiles
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Circulating supply data not available in Monte Carlo results.")
             except Exception as e:
                 st.error(f"Error plotting circulating supply: {str(e)}")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -451,13 +529,17 @@ def display_monte_carlo_results(
         with variable_tabs[1]:
             st.markdown('<div class="plot-container">', unsafe_allow_html=True)
             try:
-                fig = plot_monte_carlo_results(
-                    mc_results, 
-                    "token_price", 
-                    show_confidence_intervals=show_confidence_intervals,
-                    show_percentiles=show_percentiles
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                # Check if token_price data exists
+                if 'token_price' in mc_results.get('mean', {}):
+                    fig = plot_monte_carlo_results(
+                        mc_results, 
+                        "token_price", 
+                        show_confidence_intervals=show_confidence_intervals,
+                        show_percentiles=show_percentiles
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Token price data not available in Monte Carlo results.")
             except Exception as e:
                 st.error(f"Error plotting token price: {str(e)}")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -465,13 +547,17 @@ def display_monte_carlo_results(
         with variable_tabs[2]:
             st.markdown('<div class="plot-container">', unsafe_allow_html=True)
             try:
-                fig = plot_monte_carlo_results(
-                    mc_results, 
-                    "market_cap", 
-                    show_confidence_intervals=show_confidence_intervals,
-                    show_percentiles=show_percentiles
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                # Check if market_cap data exists
+                if 'market_cap' in mc_results.get('mean', {}):
+                    fig = plot_monte_carlo_results(
+                        mc_results, 
+                        "market_cap", 
+                        show_confidence_intervals=show_confidence_intervals,
+                        show_percentiles=show_percentiles
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Market cap data not available in Monte Carlo results.")
             except Exception as e:
                 st.error(f"Error plotting market cap: {str(e)}")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -479,13 +565,17 @@ def display_monte_carlo_results(
         with variable_tabs[3]:
             st.markdown('<div class="plot-container">', unsafe_allow_html=True)
             try:
-                fig = plot_monte_carlo_results(
-                    mc_results, 
-                    "staked_tokens", 
-                    show_confidence_intervals=show_confidence_intervals,
-                    show_percentiles=show_percentiles
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                # Check if staked_tokens data exists
+                if 'staked_tokens' in mc_results.get('mean', {}):
+                    fig = plot_monte_carlo_results(
+                        mc_results, 
+                        "staked_tokens", 
+                        show_confidence_intervals=show_confidence_intervals,
+                        show_percentiles=show_percentiles
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Staking data not available in Monte Carlo results.")
             except Exception as e:
                 st.error(f"Error plotting staked tokens: {str(e)}")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -531,14 +621,18 @@ def display_monte_carlo_results(
         
         # Get the date for the selected timestep
         try:
-            timestep_dates = mc_results['raw_data'][mc_results['raw_data']['timestep'] == selected_timestep]['date']
-            if len(timestep_dates) > 0:
-                timestep_date = timestep_dates.iloc[0]
-                st.write(f"Selected Date: {timestep_date}")
+            if 'date' in mc_results['raw_data'].columns:
+                timestep_dates = mc_results['raw_data'][mc_results['raw_data']['timestep'] == selected_timestep]['date']
+                if len(timestep_dates) > 0 and pd.notna(timestep_dates.iloc[0]):
+                    timestep_date = timestep_dates.iloc[0]
+                    st.write(f"Selected Date: {timestep_date}")
+                else:
+                    st.write(f"Selected Timestep: {selected_timestep}")
             else:
-                st.warning("No date available for selected timestep.")
+                st.write(f"Selected Timestep: {selected_timestep}")
         except Exception as e:
-            st.warning(f"Error getting date for timestep: {str(e)}")
+            st.write(f"Selected Timestep: {selected_timestep}")
+            st.caption(f"Note: Date information unavailable ({str(e)})")
         
         # Plot distribution
         st.markdown('<div class="plot-container">', unsafe_allow_html=True)
@@ -593,12 +687,21 @@ def display_agent_based_results(sim_result: pd.DataFrame, agent_data: pd.DataFra
             st.subheader("Price Metrics")
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Initial Price", f"${sim_result['token_price'].iloc[0]:.5f}")
+                if 'token_price' in sim_result.columns:
+                    st.metric("Initial Price", f"${sim_result['token_price'].iloc[0]:.5f}")
+                else:
+                    st.metric("Initial Price", "N/A")
             with col2:
-                st.metric("Final Price", f"${sim_result['token_price'].iloc[-1]:.5f}")
+                if 'token_price' in sim_result.columns:
+                    st.metric("Final Price", f"${sim_result['token_price'].iloc[-1]:.5f}")
+                else:
+                    st.metric("Final Price", "N/A")
             with col3:
-                price_change_pct = (sim_result['token_price'].iloc[-1] / sim_result['token_price'].iloc[0] - 1) * 100
-                st.metric("Price Change", f"{price_change_pct:.2f}%")
+                if 'token_price' in sim_result.columns:
+                    price_change_pct = (sim_result['token_price'].iloc[-1] / sim_result['token_price'].iloc[0] - 1) * 100
+                    st.metric("Price Change", f"{price_change_pct:.2f}%")
+                else:
+                    st.metric("Price Change", "N/A")
             st.markdown('</div>', unsafe_allow_html=True)
         
         with metric_tabs[1]:
@@ -611,12 +714,21 @@ def display_agent_based_results(sim_result: pd.DataFrame, agent_data: pd.DataFra
             st.subheader("Staking Metrics")
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Final Staked Tokens", f"{sim_result['staked_tokens'].iloc[-1]:,.0f}")
+                if 'staked_tokens' in sim_result.columns:
+                    st.metric("Final Staked Tokens", f"{sim_result['staked_tokens'].iloc[-1]:,.0f}")
+                else:
+                    st.metric("Final Staked Tokens", "N/A")
             with col2:
-                staking_ratio = sim_result['staked_tokens'].iloc[-1] / sim_result['circulating_supply'].iloc[-1] if sim_result['circulating_supply'].iloc[-1] > 0 else 0
-                st.metric("Staking Ratio", f"{staking_ratio:.2%}")
+                if 'staked_tokens' in sim_result.columns and 'circulating_supply' in sim_result.columns:
+                    staking_ratio = sim_result['staked_tokens'].iloc[-1] / sim_result['circulating_supply'].iloc[-1] if sim_result['circulating_supply'].iloc[-1] > 0 else 0
+                    st.metric("Staking Ratio", f"{staking_ratio:.2%}")
+                else:
+                    st.metric("Staking Ratio", "N/A")
             with col3:
-                st.metric("Final Staking APR", f"{sim_result['staking_apr'].iloc[-1]:.2%}")
+                if 'staking_apr' in sim_result.columns:
+                    st.metric("Final Staking APR", f"{sim_result['staking_apr'].iloc[-1]:.2%}")
+                else:
+                    st.metric("Final Staking APR", "N/A")
             st.markdown('</div>', unsafe_allow_html=True)
         
         with metric_tabs[2]:
@@ -629,10 +741,16 @@ def display_agent_based_results(sim_result: pd.DataFrame, agent_data: pd.DataFra
             st.subheader("Supply Metrics")
             col1, col2 = st.columns(2)
             with col1:
-                st.metric("Circulating Supply", f"{sim_result['circulating_supply'].iloc[-1]:,.0f}")
+                if 'circulating_supply' in sim_result.columns:
+                    st.metric("Circulating Supply", f"{sim_result['circulating_supply'].iloc[-1]:,.0f}")
+                else:
+                    st.metric("Circulating Supply", "N/A")
             with col2:
-                effective_supply = sim_result['circulating_supply'].iloc[-1] - sim_result['staked_tokens'].iloc[-1]
-                st.metric("Effective Circulating Supply", f"{effective_supply:,.0f}")
+                if 'circulating_supply' in sim_result.columns and 'staked_tokens' in sim_result.columns:
+                    effective_supply = sim_result['circulating_supply'].iloc[-1] - sim_result['staked_tokens'].iloc[-1]
+                    st.metric("Effective Circulating Supply", f"{effective_supply:,.0f}")
+                else:
+                    st.metric("Effective Circulating Supply", "N/A")
             st.markdown('</div>', unsafe_allow_html=True)
         
         with metric_tabs[3]:
@@ -645,10 +763,16 @@ def display_agent_based_results(sim_result: pd.DataFrame, agent_data: pd.DataFra
             st.subheader("Valuation Metrics")
             col1, col2 = st.columns(2)
             with col1:
-                st.metric("Final Market Cap", f"${sim_result['market_cap'].iloc[-1]:,.2f}")
+                if 'market_cap' in sim_result.columns:
+                    st.metric("Final Market Cap", f"${sim_result['market_cap'].iloc[-1]:,.2f}")
+                else:
+                    st.metric("Final Market Cap", "N/A")
             with col2:
-                mc_change_pct = (sim_result['market_cap'].iloc[-1] / sim_result['market_cap'].iloc[0] - 1) * 100 if sim_result['market_cap'].iloc[0] > 0 else 0
-                st.metric("Market Cap Change", f"{mc_change_pct:.2f}%")
+                if 'market_cap' in sim_result.columns:
+                    mc_change_pct = (sim_result['market_cap'].iloc[-1] / sim_result['market_cap'].iloc[0] - 1) * 100 if sim_result['market_cap'].iloc[0] > 0 else 0
+                    st.metric("Market Cap Change", f"{mc_change_pct:.2f}%")
+                else:
+                    st.metric("Market Cap Change", "N/A")
             st.markdown('</div>', unsafe_allow_html=True)
     
     with result_tabs[1]:

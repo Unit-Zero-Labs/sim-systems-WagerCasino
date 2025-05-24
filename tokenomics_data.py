@@ -350,7 +350,7 @@ def generate_data_from_radcad_inputs(uploaded_file):
     )
 
     # 3. Adoption Metrics (Placeholder)
-    data.adoption = pd.DataFrame(index=['Product Users', 'Token Holders'], columns=data.dates).fillna(0)
+    data.adoption = pd.DataFrame(index=['Product Users', 'Token Holders'], columns=data.dates).fillna(0).infer_objects(copy=False)
     # Example: simple linear growth for Product Users
     initial_pu = radcad_params.get('initial_product_users', 0)
     final_pu = radcad_params.get('product_users_after_10y', initial_pu if initial_pu is not None else 0) # Ensure final_pu has a fallback
@@ -435,7 +435,7 @@ def generate_data_from_radcad_inputs(uploaded_file):
     if not data.vesting_cumulative.empty:
         circulating_supply_df = data.vesting_cumulative.drop('Liquidity Pool', axis=0, errors='ignore').sum(axis=0)
         # Ensure consistent indexing for multiplication
-        token_prices_for_calc = data.token_price_series.loc['Token Price'].reindex(circulating_supply_df.index).ffill().bfill()
+        token_prices_for_calc = data.token_price_series.loc['Token Price'].reindex(circulating_supply_df.index).ffill().bfill().infer_objects(copy=False)
         market_cap_values = circulating_supply_df.values * token_prices_for_calc.values
         data.market_cap_series = pd.DataFrame(market_cap_values, index=data.dates, columns=['Market Cap']).T
         data.market_cap_series.columns = data.dates
@@ -445,7 +445,7 @@ def generate_data_from_radcad_inputs(uploaded_file):
 
     # FDV MC:
     if initial_total_supply is not None and initial_total_supply > 0:
-        token_prices_for_fdv = data.token_price_series.loc['Token Price'].reindex(data.dates).ffill().bfill()
+        token_prices_for_fdv = data.token_price_series.loc['Token Price'].reindex(data.dates).ffill().bfill().infer_objects(copy=False)
         fdv_mc_values = initial_total_supply * token_prices_for_fdv.values
         data.fdv_mc_series = pd.DataFrame(fdv_mc_values, index=data.dates, columns=['FDV MC']).T
         data.fdv_mc_series.columns = data.dates
