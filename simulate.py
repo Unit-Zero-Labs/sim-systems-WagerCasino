@@ -177,23 +177,57 @@ class TokenomicsSimulation:
         return consumed
     
     def run_simulation(self, params: Dict[str, Any], num_runs: int = 1,
-                      simulation_type: str = "stochastic") -> Union[pd.DataFrame, Dict[str, Any]]:
+                      simulation_type: str = "auto") -> Union[pd.DataFrame, Dict[str, Any]]:
         """
         Run a simulation with the given parameters using dynamic policy system.
+        Auto-detects simulation type based on available parameters.
         
         Args:
             params: Dictionary of simulation parameters
             num_runs: Number of simulation runs (1 = single run, >1 = Monte Carlo analysis)
-            simulation_type: Type of simulation to run ("stochastic" or "agent")
+            simulation_type: Type of simulation to run ("auto", "stochastic", or "agent")
             
         Returns:
             If num_runs=1: DataFrame with simulation results
             If num_runs>1: Dictionary with raw data and statistical measures (mean, std_dev, conf_intervals, percentiles)
         """
+        # Auto-detect simulation type if not specified
+        if simulation_type == "auto":
+            simulation_type = self._detect_simulation_type(params)
+            
         if simulation_type == "agent":
             return self.run_agent_simulation(params, num_runs)
         else:
             return self.run_stochastic_simulation(params, num_runs)
+    
+    def _detect_simulation_type(self, params: Dict[str, Any]) -> str:
+        """
+        Auto-detect simulation type based on available parameters.
+        
+        Args:
+            params: Dictionary of simulation parameters
+            
+        Returns:
+            "agent" if agent parameters are detected, "stochastic" otherwise
+        """
+        # Agent-related parameter patterns to look for
+        agent_patterns = [
+            "random_trader_count", "trend_follower_count", "staking_agent_count",
+            "agent_random_traders", "agent_trend_followers", "agent_staking",
+            "random_trader", "trend_follower", "staking_agent"
+        ]
+        
+        # Check if any agent parameters are present and have meaningful values
+        for param_name, param_value in params.items():
+            param_lower = param_name.lower()
+            if any(pattern in param_lower for pattern in agent_patterns):
+                # Check if the parameter has a meaningful value (not None, not 0)
+                if param_value is not None and param_value != 0:
+                    st.info(f"🤖 **Agent-Based Modeling Activated** - Detected parameter: `{param_name}` = {param_value}")
+                    return "agent"
+        
+        # Default to stochastic simulation
+        return "stochastic"
     
     def run_stochastic_simulation(self, params: Dict[str, Any], num_runs: int = 1) -> Union[pd.DataFrame, Dict[str, Any]]:
         """

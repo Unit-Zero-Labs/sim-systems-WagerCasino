@@ -15,9 +15,16 @@ The Unit Zero Labs Tokenomics Engine is a comprehensive simulation and visualiza
 ## Recent Major Updates
 
 ### Unified Simulation Interface (Latest)
-- **Removed Monte Carlo Toggle**: Eliminated the artificial distinction between "single" and "Monte Carlo" simulations
-- **Simplified Interface**: Now uses a single "Number of Runs" slider (1 = single run, >1 = Monte Carlo analysis)
+- **Removed Simulation Approach Toggle**: Eliminated the manual selection between "Standard Stochastic" and "Agent-Based Modeling"
+- **Auto-Detection System**: System now automatically detects simulation type based on available parameters
+- **Parameter-First Simulation**: Agent-based modeling is automatically activated when agent parameters are detected
+- **Simplified Interface**: Now only shows "Number of Runs" slider - single point of control
 - **Cleaner UX**: Removed redundant controls and streamlined the simulation workflow
+- **True Parameter-First Design**: System adapts completely based on what parameters are provided
+
+### Previous: Unified Number of Runs
+- **Removed Monte Carlo Toggle**: Eliminated the artificial distinction between "single" and "Monte Carlo" simulations
+- **Simplified Interface**: Uses a single "Number of Runs" slider (1 = single run, >1 = Monte Carlo analysis)
 - **Conceptual Clarity**: Every simulation with randomness is Monte Carlo - single run is just n=1
 
 ### Parameter-First Architecture Implementation
@@ -135,7 +142,8 @@ The policy factory automatically creates simulation policies:
 
 ### Simulation Engine
 
-The core simulation engine uses radCAD to model token economics:
+The core simulation engine uses radCAD to model token economics and automatically detects simulation type:
+- **Auto-Detection**: Automatically switches to agent-based modeling when agent parameters are detected
 - State variables: token supply, circulating supply, staked tokens, etc.
 - Policy functions: vesting schedule, staking behavior, token price dynamics
 - State update functions: update supply, staking, price, market cap

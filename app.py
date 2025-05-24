@@ -9,7 +9,6 @@ from tokenomics_data import TokenomicsData, generate_data_from_radcad_inputs
 from simulate import TokenomicsSimulation
 from logic.state_manager import StateManager
 from logic.data_manager import DataManager
-from logic.monte_carlo import MonteCarloSimulator
 from logic.parameter_registry import parameter_registry
 from visualization.dynamic_components import create_dynamic_ui_generator
 from utils.config import get_ui_config
@@ -124,9 +123,11 @@ def main():
             st.write("""
             This unified simulation engine automatically adapts to your CSV parameters and includes support for:
             • **Standard Tokenomics**: Vesting, staking, pricing, utility mechanisms
-            • **Agent Behavior**: Individual trader behaviors and market dynamics  
+            • **Agent Behavior**: Automatically detected when agent parameters are included  
             • **Points Campaigns**: Off-chain systems with conversion mechanics
             • **Monte Carlo Analysis**: Statistical analysis across multiple simulation runs
+            
+            💡 **The system automatically detects what type of simulation to run based on your parameters!**
             """)
             
             # Display dynamic parameter controls based on loaded CSV
@@ -140,52 +141,39 @@ def main():
             
             # Display simulation mode selection
             with st.expander("🎛️ Simulation Configuration", expanded=True):
-                col1, col2 = st.columns(2)
+                # Simulation runs configuration
+                num_runs = st.slider(
+                    "Number of Simulation Runs",
+                    min_value=1,
+                    max_value=100,
+                    value=1,
+                    help="Number of simulation runs. 1 = single run, >1 = Monte Carlo analysis with statistical measures",
+                    key="num_runs"
+                )
                 
-                with col1:
-                    # Simulation approach selection
-                    simulation_approach = st.selectbox(
-                        "Simulation Approach",
-                        ["Standard Stochastic", "Agent-Based Modeling"],
-                        help="Choose how to model market behavior",
-                        key="simulation_approach"
-                    )
-                    
-                    if simulation_approach == "Agent-Based Modeling":
-                        st.info("💡 Agent behavior parameters can be defined in your CSV file with names like `agent_random_traders`, `agent_trend_followers`, etc.")
-                
-                with col2:
-                    # Simulation runs configuration
-                    num_runs = st.slider(
-                        "Number of Simulation Runs",
-                        min_value=1,
-                        max_value=100,
-                        value=1,
-                        help="Number of simulation runs. 1 = single run, >1 = Monte Carlo analysis with statistical measures",
-                        key="num_runs"
-                    )
-                    
-                    # Only show additional Monte Carlo options if multiple runs
-                    if num_runs > 1:
+                # Only show additional Monte Carlo options if multiple runs
+                if num_runs > 1:
+                    col1, col2 = st.columns(2)
+                    with col1:
                         show_confidence_intervals = st.checkbox(
                             "Show Confidence Intervals",
                             value=True,
                             help="Display 95% confidence intervals around the mean",
                             key="show_confidence_intervals"
                         )
+                    with col2:
                         show_percentiles = st.checkbox(
                             "Show Percentiles",
                             value=True,
                             help="Display 5th, 25th, 75th, and 95th percentiles",
                             key="show_percentiles"
                         )
-                    else:
-                        show_confidence_intervals = False
-                        show_percentiles = False
+                else:
+                    show_confidence_intervals = False
+                    show_percentiles = False
             
             # Store parameters in session state
             StateManager.set_simulation_params(params)
-            StateManager.set_simulation_type(simulation_approach.lower().replace(" ", "_").replace("-", "_"))
             
             # Display parameter summary
             if params:
@@ -209,29 +197,15 @@ def main():
             if run_button:
                 # Get parameters from session state
                 params = StateManager.get_simulation_params()
-                sim_approach = StateManager.get_simulation_type()
-                
-                # Determine simulation type for backend
-                simulation_type = "agent" if "agent" in sim_approach else "stochastic"
                 
                 # Run simulation with progress bar
                 with st.spinner(f"Running simulation with {num_runs} run{'s' if num_runs > 1 else ''}..."):
                     try:
-                        if simulation_type == "agent":
-                            # For agent-based, use the simulation's native method
-                            sim_result = simulation.run_simulation(
-                                params, 
-                                num_runs=num_runs,
-                                simulation_type="agent"
-                            )
-                        else:
-                            # For stochastic, use Monte Carlo simulator
-                            mc_simulator = MonteCarloSimulator(simulation)
-                            sim_result = mc_simulator.run_simulations(
-                                params, 
-                                num_runs=num_runs
-                            )
-                            StateManager.set_simulator(mc_simulator)
+                        sim_result = simulation.run_simulation(
+                            params, 
+                            num_runs=num_runs,
+                            simulation_type="auto"
+                        )
                         
                         StateManager.set_simulation_result(sim_result)
                         
@@ -277,7 +251,7 @@ def main():
                     
                     if has_valid_params:
                         with st.spinner("Running initial simulation with current parameters..."):
-                            sim_result = simulation.run_simulation(params, num_runs=1, simulation_type="stochastic")
+                            sim_result = simulation.run_simulation(params, num_runs=1, simulation_type="auto")
                             StateManager.set_simulation_result(sim_result)
                             StateManager.set_simulation_result_displayed(True)
                             
