@@ -1,188 +1,95 @@
-## Unit Zero Labs Tokenomics Engine
+# Unit Zero Labs Tokenomics Engine
 
-An interactive dashboard for visualizing and simulating tokenomics data by Unit Zero Labs.
-
-## Overview
-
-This app provides a comprehensive visualization and simulation tool for tokenomics data. After working with UZL to define basic token parameters and utility modules, it allows users to:
-
-1. **Analyze** token distribution, price, valuations, and utility metrics over time
-2. **Simulate** different tokenomics scenarios by adjusting parameters
-3. **Compare** different scenarios (future feature)
-
-## Features
-
-### Analysis Tab
-- Project Token Buckets & Token Supply
-- Token Price
-- Token Valuations (Market Cap and FDV)
-- DEX Liquidity Valuation
-- Utility Allocations
-- Monthly Utility Incentives / Burnings / Transfers
-- Staking APR
-
-### Simulation Tab
-- Adjust parameters like Staking Share and Token Price
-- Visualize the impact on token supply
-- Compare simulation results with initial values
-
-### Scenario Analysis Tab
-- Reserved for future features
-
-## Install Steps for Reproducing
-
-1. Clone this repository:
-   ```
-   git clone <repository-url>
-   cd <repository-directory>
-   ```
-
-2. Install the required packages:
-   ```
-   pip install -r requirements.txt
-   ```
-
-## Usage
-
-1. Run the Streamlit application:
-   ```
-   streamlit run app.py
-   ```
-
-2. Upload the "Data Tables" CSV file from the UZL tokenomics model (download as CSV).
-
-3. Explore the different tabs:
-   - **Analysis**: View various charts of your tokenomics data
-   - **Simulation**: Adjust parameters and run simulations
-   - **Scenario Analysis**: Future feature
-
-## Data Format
-
-The application expects a CSV file with the following structure:
-- Unnamed columns with section headers
-- Time-series data with dates in the format MM/YY
-- Sections for vesting schedules, adoption metrics, and utility allocations
-
-## Requirements
-
-- Python 3.9 or higher
-- pandas
-- streamlit
-- plotly
-- numpy
-- cadCAD
-
-# Monte Carlo Simulation for Tokenomics Modeling
+A comprehensive simulation and visualization platform for tokenomics modeling and analysis.
 
 ## Overview
 
-This feature extends the tokenomics simulation engine to support Monte Carlo simulations with multiple runs. Instead of producing a single deterministic outcome, Monte Carlo simulations run the model multiple times with different random seeds, allowing us to understand the range of possible outcomes and their probabilities.
+The Unit Zero Labs Tokenomics Engine is an enterprise-grade simulation platform that enables blockchain projects to model, analyze, and optimize their token economics through advanced mathematical modeling and Monte Carlo simulations. Built on a parameter-first architecture, the platform automatically adapts to your project's unique tokenomics structure without requiring custom development.
 
-## Key Benefits
+## Core Capabilities
 
-- **Uncertainty Quantification**: Understand the range of possible outcomes for key metrics like token price and market cap.
-- **Confidence Intervals**: Visualize 95% confidence intervals around mean values to assess prediction reliability.
-- **Probability Distributions**: See the full distribution of possible outcomes at specific points in time.
-- **Risk Assessment**: Identify potential downside risks and upside opportunities in your tokenomics design.
+### Intelligent Parameter Discovery
+- **Automatic Parameter Detection**: Seamlessly ingests tokenomics data from CSV files and automatically categorizes parameters by type and function
+- **Dynamic Policy Generation**: Creates simulation policies based on detected parameters (vesting, staking, utility mechanisms, agent behavior)
+- **Zero-Configuration Scaling**: Adapts from single-client deployments to enterprise-scale implementations without code modifications
 
-## How It Works
+### Advanced Simulation Engine
+- **Monte Carlo Analysis**: Statistical modeling with confidence intervals, percentile bands, and probability distributions
+- **Agent-Based Modeling**: Automatically activated when agent parameters are detected in your tokenomics structure
+- **Real-Time Parameter Adjustment**: Interactive simulation controls for immediate scenario testing
+- **Risk Assessment**: Quantitative analysis of downside risks and upside opportunities
 
-1. The simulation engine runs the model multiple times (e.g., 10, 50, or 100 runs).
-2. Each run uses a different random seed, affecting stochastic elements like price volatility.
-3. The results are aggregated to calculate statistical measures:
-   - Mean values
-   - Standard deviations
-   - Confidence intervals
-   - Percentiles (5th, 25th, 50th, 75th, 95th)
-4. These statistics are visualized to provide insights into the range of possible outcomes.
+### Professional Visualization Suite
+- **Token Supply Dynamics**: Comprehensive analysis of circulating supply, total supply, and allocation distributions
+- **Valuation Metrics**: Market capitalization, fully diluted valuation (FDV), and DEX liquidity analysis
+- **Staking Economics**: APR tracking, reward distribution modeling, and delegation dynamics
+- **Utility Mechanisms**: Burn rates, transfer patterns, and custom utility function analysis
 
-## Using the Monte Carlo Feature
+## Technical Architecture
 
-### In the Tokenomics Dashboard
+### Parameter Categories Supported
+- **Tokenomics**: Supply schedules, allocation distributions, inflation/deflation mechanisms
+- **Vesting**: Cliff periods, linear/non-linear release schedules, beneficiary categories
+- **Staking**: Reward rates, delegation mechanics, slashing conditions
+- **Pricing**: Volatility modeling, market dynamics, valuation frameworks
+- **Utility Mechanisms**: Burn mechanics, transfer fees, governance tokens
+- **Agent Behavior**: Trading patterns, market maker dynamics, user adoption curves
 
-1. Upload your tokenomics data CSV.
-2. Go to the "Simulation" tab.
-3. Set your desired parameters (Staking Share, Token Launch Price, etc.).
-4. Set the "Number of Monte Carlo Runs" to a value greater than 1 (e.g., 10 for quick analysis, 50+ for more accurate results).
-5. Click "Run Simulation".
-6. View the results:
-   - Time series chart with confidence intervals and percentile bands
-   - Probability distribution at a specific timestep
-   - Statistical summary
+### Simulation Methodologies
+- **Deterministic Modeling**: Single-run simulations for parameter testing and validation
+- **Stochastic Analysis**: Multi-run Monte Carlo simulations with statistical aggregation
+- **Uncertainty Quantification**: 95% confidence intervals and percentile band analysis
+- **Sensitivity Analysis**: Parameter impact assessment and optimization guidance
 
-### In Code
+## Getting Started
 
-```python
-from simulate import TokenomicsSimulation
-from data_parser import parse_csv
+### System Requirements
+- Python 3.9+
+- Modern web browser
+- 4GB+ RAM recommended for complex simulations
 
-# Parse data
-data = parse_csv("data_tables.csv")
+### Installation
+```bash
+# Clone the repository
+git clone <repository-url>
+cd tokenomics-engine
 
-# Create simulation
-simulation = TokenomicsSimulation(data)
+# Install dependencies
+pip install -r requirements.txt
 
-# Set parameters
-params = {
-    "staking_share": 0.5,
-    "token_price": 0.03,
-    "market_volatility": 0.2
-}
-
-# Run Monte Carlo simulation with 50 runs
-results = simulation.run_simulation(params, num_runs=50)
-
-# Access statistical measures
-mean_price = results['mean']['token_price']
-conf_intervals = results['conf_intervals']['token_price']
-percentiles = results['percentiles']['token_price']
-
-# Get distribution at a specific timestep
-dist_at_timestep_10 = simulation.get_distribution_at_timestep(results, 'token_price', 10)
+# Launch the application
+streamlit run app.py
 ```
 
-## Interpreting the Results
+### Data Input Format
+The platform accepts CSV files containing your tokenomics parameters. The system automatically:
+- Detects parameter types and categories
+- Validates data structure and formats
+- Generates appropriate simulation policies
+- Creates dynamic user interface controls
 
-### Confidence Intervals
+## Professional Support
 
-The 95% confidence interval represents the range within which we expect the true value to fall with 95% probability. Wider confidence intervals indicate greater uncertainty.
+This tokenomics engine is developed and maintained by Unit Zero Labs. For enterprise implementations, custom policy development, or technical support, please contact our team.
 
-### Percentile Bands
+### Key Benefits for Projects
+- **Accelerated Development**: Reduce tokenomics modeling time from weeks to hours
+- **Risk Mitigation**: Identify potential economic vulnerabilities before mainnet launch
+- **Stakeholder Communication**: Generate professional visualizations for investors and community
+- **Regulatory Compliance**: Provide quantitative analysis for regulatory submissions
 
-- **5th Percentile**: Only 5% of simulations resulted in values below this line (downside risk).
-- **25th Percentile**: 25% of simulations fell below this line.
-- **75th Percentile**: 75% of simulations fell below this line.
-- **95th Percentile**: 95% of simulations fell below this line (upside potential).
+## Technical Dependencies
 
-### Probability Distributions
-
-The histogram and density plot show the full distribution of possible outcomes at a specific point in time. This helps assess the likelihood of different scenarios.
-
-## Technical Implementation
-
-The Monte Carlo simulation feature is implemented in the `TokenomicsSimulation` class with the following key components:
-
-1. **run_simulation**: Modified to accept a `num_runs` parameter and process multiple runs.
-2. **create_monte_carlo_visualization**: Helper method to prepare data for visualization.
-3. **get_distribution_at_timestep**: Method to analyze the distribution at a specific timestep.
-
-The implementation uses NumPy for statistical calculations and can be easily integrated with visualization libraries like Plotly.
-
-## Future Enhancements
-
-Potential future enhancements to the Monte Carlo simulation feature include:
-
-1. **Sensitivity Analysis**: Automatically vary parameters to identify which ones have the most impact on outcomes.
-2. **Scenario Optimization**: Use Monte Carlo results to find optimal parameter combinations.
-3. **Value at Risk (VaR)**: Calculate financial risk metrics based on simulation results.
-4. **Custom Distributions**: Allow users to specify custom probability distributions for random variables.
-
+- **Simulation Framework**: radCAD 0.4.28+ for mathematical modeling
+- **Data Processing**: pandas 2.0.0+ with optimized performance
+- **Visualization**: Plotly 5.14.1+ for interactive charts
+- **Web Interface**: Streamlit 1.22.0+ for professional UI
+- **Statistical Computing**: NumPy 1.24.3+ for Monte Carlo analysis
 
 ## License
 
-[MIT License](LICENSE)
+This software is proprietary to Unit Zero Labs. Usage rights are granted under specific licensing agreements.
 
-## Contributing
+---
 
-Contributions are welcome! Please feel free to submit a Pull Request. 
-
+**Unit Zero Labs** - Advanced Tokenomics Engineering 
